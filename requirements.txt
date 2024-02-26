@@ -1,0 +1,10 @@
+sphinx_rtd_theme
+myst-parser
+nbsphinx
+pandas
+numpy
+scipy
+alive_progress
+matplotlib
+matplotlib-label-lines
+MagmaPandas
