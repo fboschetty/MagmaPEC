@@ -3,13 +3,12 @@ from typing import Union
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import root_scalar
-
 from MagmaPandas.configuration import configuration
 from MagmaPandas.MagmaFrames import Melt
 from MagmaPandas.MagmaSeries import MagmaSeries
+from scipy.optimize import root_scalar
 
-from .PEC_configuration import PEC_configuration
+from ..PEC_configuration import PEC_configuration
 from .PEC_functions import _root_Kd, calculate_Kds
 
 
@@ -51,9 +50,9 @@ def crystallisation_correction(
     # SET UP INITIAL DATA
     # Dataframe with new compositions
     mi_moles = Melt(columns=inclusion.elements, units="mol fraction", datatype="oxide")
-    mi_moles.loc[equilibration_crystallisation] = (
-        inclusion.moles[inclusion.elements].values
-    )
+    mi_moles.loc[equilibration_crystallisation] = inclusion.moles[
+        inclusion.elements
+    ].values
     # Covert to moles left after equilibration
     mi_moles = mi_moles.mul((1 + equilibration_crystallisation), axis=0)
     # Get olivine molar oxide fractions
@@ -84,9 +83,7 @@ def crystallisation_correction(
     FeMg_vector.loc[["FeO", "MgO"]] = 1, -1
     # Inclusion starting FeO
     FeO = inclusion["FeO"]
-    temperature_old = mi_moles.iloc[-1].convert_moles_wtPercent.melt_temperature(
-        P_bar=P_bar
-    )
+    temperature_old = mi_moles.iloc[-1].convert_moles_wtPercent.temperature(P_bar=P_bar)
     # Function to calculate Kds
     calculate_Kd = partial(calculate_Kds, P_bar=P_bar, forsterite=forsterite, dQFM=dQFM)
 
@@ -99,7 +96,7 @@ def crystallisation_correction(
 
     ##### OLIVINE MELTING/CRYSTALLISATION LOOP #####
     mi_wtPercent = mi_moles.convert_moles_wtPercent
-    
+
     while not np.isclose(FeO, FeO_target, atol=converge, rtol=0):
 
         if abs(stepsize) < min_stepsize:
@@ -145,7 +142,7 @@ def crystallisation_correction(
             stepsize = stepsize / decrease_factor
 
     Kd_equilibrium, Kd_real = calculate_Kd(mi_moles.iloc[-1].normalise())
-    temperature_new = mi_wtPercent.iloc[-1].melt_temperature(P_bar)
+    temperature_new = mi_wtPercent.iloc[-1].temperature(P_bar)
     olivine_corrected = mi_moles.index.values
     if olivine_corrected.max() == 0:
         mi_wtPercent = mi_moles.convert_moles_wtPercent

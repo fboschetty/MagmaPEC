@@ -4,17 +4,15 @@ from typing import Union
 import elementMass as e
 import numpy as np
 import pandas as pd
-from scipy.optimize import root_scalar
-
 from MagmaPandas.configuration import configuration
-from MagmaPandas.Fe_redox import Fe_redox
+from MagmaPandas.Fe_redox import Fe3Fe2_models
 from MagmaPandas.fO2 import fO2_QFM
 from MagmaPandas.Kd.Ol_melt import calculate_FeMg_Kd
 from MagmaPandas.MagmaFrames import Melt
 from MagmaPandas.MagmaSeries import MagmaSeries
+from scipy.optimize import root_scalar
 
-
-from .PEC_configuration import PEC_configuration
+from ..PEC_configuration import PEC_configuration
 from .PEC_functions import _root_temperature
 
 
@@ -45,10 +43,10 @@ def Fe_equilibrate(
     inclusion = inclusion[inclusion.elements].copy()
     inclusion = inclusion.normalise()
     # Calculate temperature and fO2
-    temperature = inclusion.melt_temperature(P_bar=P_bar)
+    temperature = inclusion.temperature(P_bar=P_bar)
     fO2 = fO2_QFM(dQFM, temperature, P_bar)
     # Collect configured models
-    Fe3Fe2_model = getattr(Fe_redox, configuration.Fe3Fe2_model)
+    Fe3Fe2_model = Fe3Fe2_models[configuration.Fe3Fe2_model]
     Kd_model = calculate_FeMg_Kd
     # Get olivine molar oxide fractions
     if isinstance(olivine, float):
@@ -63,14 +61,20 @@ def Fe_equilibrate(
         )
     else:
         olivine = olivine.moles
-        forsterite = olivine["MgO"] / (olivine["MgO"] + olivine["FeO"])    
+        forsterite = olivine["MgO"] / (olivine["MgO"] + olivine["FeO"])
 
     # Fix some parameters for Kd calculation
     calculate_Kd = partial(
         Kd_model, forsterite_initial=forsterite, T_K=temperature, P_bar=P_bar
     )
     # Calculate initial Fe speciation
-    Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(inclusion.moles, Fe2_behaviour="buffered", temperature=temperature, fO2=fO2, Fe3Fe2_model=Fe3Fe2_model)
+    Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(
+        inclusion.moles,
+        Fe2_behaviour="buffered",
+        temperature=temperature,
+        fO2=fO2,
+        Fe3Fe2_model=Fe3Fe2_model,
+    )
     # For non-buffered Fe2+
     if Fe2_behaviour == "closed system":
         # Calculate Fe speciation
@@ -106,7 +110,12 @@ def Fe_equilibrate(
         idx = mi_moles.index[-1] + stepsize
         mi_moles.loc[idx] = (mi_moles.iloc[-1] + FeMg_vector.mul(stepsize)).values
         # Equilibrium Kd and Fe speciation for new composition
-        Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(mi_moles.iloc[-1], temperature=temperature, fO2=fO2, Fe3Fe2_model=Fe3Fe2_model)
+        Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(
+            mi_moles.iloc[-1],
+            temperature=temperature,
+            fO2=fO2,
+            Fe3Fe2_model=Fe3Fe2_model,
+        )
         Kd_equilibrium = calculate_Kd(
             Melt_mol_fractions=mi_moles.normalise().loc[idx], Fe3Fe2=Fe3Fe2
         )
@@ -132,12 +141,17 @@ def Fe_equilibrate(
             olivine_crystallised, olivine_crystallised[-1] + olivine_amount
         )
         # mi_moles = mi_moles.normalise()
-        temperature_new = mi_moles.loc[idx].convert_moles_wtPercent.melt_temperature(
+        temperature_new = mi_moles.loc[idx].convert_moles_wtPercent.temperature(
             P_bar=P_bar
         )
         ######################################################
         # New equilibrium Kd and Fe speciation
-        Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(mi_moles.iloc[-1], temperature=temperature, fO2=fO2, Fe3Fe2_model=Fe3Fe2_model)
+        Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(
+            mi_moles.iloc[-1],
+            temperature=temperature,
+            fO2=fO2,
+            Fe3Fe2_model=Fe3Fe2_model,
+        )
         Kd_equilibrium = calculate_Kd(
             Melt_mol_fractions=mi_moles.normalise().loc[idx], Fe3Fe2=Fe3Fe2
         )
@@ -154,7 +168,12 @@ def Fe_equilibrate(
             mi_moles.drop(index=idx, inplace=True)
             olivine_crystallised = olivine_crystallised[:-1]
             # Reset equilibrium and real Kd
-            Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(mi_moles.iloc[-1], temperature=temperature, fO2=fO2, Fe3Fe2_model=Fe3Fe2_model)
+            Fe3Fe2, Fe2_FeTotal = _calculate_Fe2(
+                mi_moles.iloc[-1],
+                temperature=temperature,
+                fO2=fO2,
+                Fe3Fe2_model=Fe3Fe2_model,
+            )
             Kd_equilibrium = calculate_Kd(
                 Melt_mol_fractions=mi_moles.normalise().iloc[-1], Fe3Fe2=Fe3Fe2
             )
@@ -180,19 +199,24 @@ def Fe_equilibrate(
         {"Equilibrium": Kd_equilibrium, "Real": Kd_real},
     )
 
+
 def _calculate_Fe2(
-        mol_fractions, temperature, fO2, Fe2_behaviour: str="buffered", Fe3Fe2_model: callable=None
-    ):
-        if Fe3Fe2_model is None:
-            Fe3Fe2_model = getattr(Fe_redox, configuration.Fe3Fe2_model)
+    mol_fractions,
+    temperature,
+    fO2,
+    Fe2_behaviour: str = "buffered",
+    Fe3Fe2_model: callable = None,
+):
+    if Fe3Fe2_model is None:
+        Fe3Fe2_model = Fe3Fe2_models[configuration.Fe3Fe2_model]
 
-        m_fractions = mol_fractions.copy()
-        m_fractions = m_fractions.normalise()
-        if Fe2_behaviour == "closed system":
-            Fe2_FeTotal = 1
-            Fe3Fe2 = mol_fractions.loc["Fe2O3"] * 2 / mol_fractions.loc["FeO"]
-        elif Fe2_behaviour == "buffered":
-            Fe3Fe2 = Fe3Fe2_model(m_fractions, temperature, fO2)
-            Fe2_FeTotal = 1 / (1 + Fe3Fe2)
+    m_fractions = mol_fractions.copy()
+    m_fractions = m_fractions.normalise()
+    if Fe2_behaviour == "closed system":
+        Fe2_FeTotal = 1
+        Fe3Fe2 = mol_fractions.loc["Fe2O3"] * 2 / mol_fractions.loc["FeO"]
+    elif Fe2_behaviour == "buffered":
+        Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(m_fractions, temperature, fO2)
+        Fe2_FeTotal = 1 / (1 + Fe3Fe2)
 
-        return Fe3Fe2, Fe2_FeTotal
+    return Fe3Fe2, Fe2_FeTotal

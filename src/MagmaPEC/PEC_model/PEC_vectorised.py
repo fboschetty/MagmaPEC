@@ -19,15 +19,16 @@ config_handler.set_global(
 
 
 from MagmaPandas.configuration import configuration
-from MagmaPandas.Fe_redox import Fe_redox
+from MagmaPandas.Fe_redox import Fe3Fe2_models
 from MagmaPandas.fO2 import fO2_QFM
-from MagmaPandas.Kd.Ol_melt import calculate_FeMg_Kd
+from MagmaPandas.Kd.Ol_melt import Kd_models, calculate_FeMg_Kd
 from MagmaPandas.MagmaFrames import Melt, Olivine
 
-from .cryst_correction_model import crystallisation_correction
-from .Fe_eq_model import Fe_equilibrate
-from .PEC_configuration import PEC_configuration
-from .PEC_functions import _root_Kd, _root_temperature
+from ..PEC_configuration import PEC_configuration
+from .cryst_correction import crystallisation_correction
+from .Fe_eq import Fe_equilibrate
+
+# from .PEC_functions import _root_Kd, _root_temperature
 
 
 class PEC_olivine:
@@ -37,8 +38,12 @@ class PEC_olivine:
         olivines: Union[Olivine, pd.Series, float],
         P_bar: Union[float, int, pd.Series],
         FeO_target: Union[float, pd.Series, callable],
+        Fe3Fe2_offset_parameters=0,
+        Kd_offset_parameters=0,
         **kwargs,
     ):
+        self.Fe3Fe2_offset_parameters = Fe3Fe2_offset_parameters
+        self.Kd_offset_parameters = Kd_offset_parameters
 
         self.olivine_corrected = pd.DataFrame(
             0.0,
@@ -199,12 +204,32 @@ class PEC_olivine:
             name="Fe_loss",
         )
 
+    def calculate_Fe3Fe2(self, **kwargs):
+
+        Fe3Fe2_model = Fe3Fe2_models[configuration.Fe3Fe2_model]
+
+        melt = kwargs.get("melt", self.inclusions.moles)
+        pressure = kwargs.get("P_bar", self.P_bar)
+        dQFM = kwargs.get("dQFM", configuration.dQFM)
+
+        T_K = kwargs.get("T_K", melt.convert_moles_wtPercent.temperature(pressure))
+        fO2 = kwargs.get("fO2", fO2_QFM(dQFM, T_K, pressure))
+
+        Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(
+            Melt_mol_fractions=melt, T_K=T_K, fO2=fO2, P_bar=pressure
+        )
+        offset = Fe3Fe2_model.get_offset(
+            Fe3Fe2=Fe3Fe2, offset_parameters=self.Fe3Fe2_offset_parameters
+        )
+
+        return Fe3Fe2 + offset
+
     def calculate_Kds(self, **kwargs):
         """
         Calculate observed and modelled Kds
         """
-        Fe3Fe2_model = getattr(Fe_redox, configuration.Fe3Fe2_model)
-        Kd_model = calculate_FeMg_Kd
+        Kd_model = Kd_models[configuration.Kd_model]
+        calculate_Kd = calculate_FeMg_Kd
 
         dQFM = kwargs.get("dQFM", configuration.dQFM)
 
@@ -214,20 +239,33 @@ class PEC_olivine:
 
         T_K = kwargs.get("T_K", melt.convert_moles_wtPercent.temperature(pressure))
         fO2 = kwargs.get("fO2", fO2_QFM(dQFM, T_K, pressure))
-        Fe3Fe2 = Fe3Fe2_model(melt, T_K, fO2)
+
+        Fe3Fe2 = self.calculate_Fe3Fe2(
+            melt=melt, P_bar=pressure, dQFM=dQFM, fO2=fO2, T_K=T_K
+        )
 
         Fe2_FeTotal = 1 / (1 + Fe3Fe2)
         melt_MgFe = melt["MgO"] / (melt["FeO"] * Fe2_FeTotal)
         olivine_MgFe = forsterite / (1 - forsterite)
         Kd_observed = melt_MgFe / olivine_MgFe
-        Kd_observed.rename("real", inplace=True)
-        Kd_observed.index.name = "name"
+        if isinstance(Kd_observed, pd.Series):
+            Kd_observed.rename("real", inplace=True)
+            Kd_observed.index.name = "name"
 
-        Kd_equilibrium = Kd_model(melt, forsterite, T_K, Fe3Fe2, P_bar=pressure)
-        if isinstance(Kd_equilibrium, (float, int)):
-            Kd_equilibrium = pd.Series(Kd_equilibrium, index=melt.index)
-        Kd_equilibrium.rename("equilibrium", inplace=True)
-        Kd_equilibrium.index.name = "name"
+        Kd_equilibrium = calculate_Kd(melt, forsterite, T_K, Fe3Fe2, P_bar=pressure)
+        offset = Kd_model.get_offset(
+            melt_composition=melt.convert_moles_wtPercent,
+            offset_parameters=self.Kd_offset_parameters,
+        )
+        Kd_equilibrium = Kd_equilibrium + offset
+
+        # if isinstance(Kd_equilibrium, (float, int)):
+        #     Kd_equilibrium = pd.Series(Kd_equilibrium, index=melt.index)
+        # Kd_equilibrium.rename("equilibrium", inplace=True)
+        # Kd_equilibrium.index.name = "name"
+        if isinstance(Kd_equilibrium, pd.Series):
+            Kd_equilibrium.rename("equilibrium", inplace=True)
+            Kd_equilibrium.index.name = "name"
 
         return Kd_equilibrium, Kd_observed
 
@@ -239,12 +277,12 @@ class PEC_olivine:
         name, inclusion, olivine, temperature, pressure = sample
 
         inclusion_wtPercent = inclusion.convert_moles_wtPercent
-        temperature_new = inclusion_wtPercent.melt_temperature(pressure)
+        temperature_new = inclusion_wtPercent.temperature(pressure)
 
         sign = np.sign(temperature - temperature_new)
 
         olivine_amount = root_scalar(
-            _root_temperature,
+            self._root_temperature,
             args=(
                 inclusion,
                 olivine,
@@ -256,6 +294,27 @@ class PEC_olivine:
         ).root
 
         return name, olivine_amount
+
+    @staticmethod
+    def _root_temperature(olivine_amount, melt_x_moles, olivine_x_moles, T_K, P_bar):
+
+        melt_x_new = melt_x_moles + olivine_x_moles.mul(olivine_amount)
+        melt_x_new = melt_x_new.normalise()
+        temperature_new = melt_x_new.convert_moles_wtPercent.temperature(P_bar=P_bar)
+
+        return T_K - temperature_new
+
+    def _root_Kd(
+        self, exchange_amount, melt_x_moles, exchange_vector, forsterite, P_bar, kwargs
+    ):
+
+        melt_x_new = melt_x_moles + exchange_vector.mul(exchange_amount)
+        melt_x_new = melt_x_new.normalise()
+        Kd_equilibrium, Kd_real = self.calculate_Kds(
+            melt=melt_x_new, P_bar=P_bar, forsterite=forsterite, **kwargs
+        )
+
+        return Kd_equilibrium - Kd_real
 
     def Fe_equilibrate(self, inplace=False, **kwargs):
         """ """
@@ -269,17 +328,19 @@ class PEC_olivine:
         Kd_converge = getattr(PEC_configuration, "Kd_converge")
         dQFM = configuration.dQFM
         P_bar = self.P_bar
-        # Get configured models
-        Fe3Fe2_model = getattr(Fe_redox, configuration.Fe3Fe2_model)
+
         # Calculate temperature and fO2
         temperatures = self.inclusions.temperature(P_bar=P_bar)
         fO2 = fO2_QFM(dQFM, temperatures, P_bar)
         # Get olivine forsterite contents
         forsterite_host = self._olivine.forsterite
 
-        def calculate_Fe2FeTotal(mol_fractions, T_K, oxygen_fugacity):
+        def calculate_Fe2FeTotal(mol_fractions, T_K, P_bar, oxygen_fugacity):
 
-            Fe3Fe2 = Fe3Fe2_model(mol_fractions, T_K, oxygen_fugacity)
+            Fe3Fe2 = self.calculate_Fe3Fe2(
+                melt=mol_fractions, T_K=T_K, P_bar=P_bar, fO2=oxygen_fugacity
+            )
+
             return 1 / (1 + Fe3Fe2)
 
         # Set up initial data
@@ -302,7 +363,7 @@ class PEC_olivine:
         ].copy()
         # Store olivine correction for the current itaration
         olivine_corrected_loop = pd.Series(
-            0, index=mi_moles.index, name="olivine_corrected"
+            0.0, index=mi_moles.index, name="olivine_corrected", dtype=np.float16
         )
 
         ##### Main Fe-Mg exhange loop #####
@@ -341,7 +402,7 @@ class PEC_olivine:
                     forsterite=Fo_host_loop,
                 )
                 Fe2_FeTotal = calculate_Fe2FeTotal(
-                    mi_moles_loop.normalise(), temperatures_loop, fO2_loop
+                    mi_moles_loop.normalise(), temperatures_loop, P_loop, fO2_loop
                 )
                 melt_FeMg = (mi_moles_loop["FeO"] * Fe2_FeTotal) / mi_moles_loop["MgO"]
                 # equilibrium olivine composition in oxide mol fractions
@@ -362,13 +423,13 @@ class PEC_olivine:
                 # Single core
                 for sample in mi_moles_loop.index:
                     sample_wtPercent = mi_moles_loop.loc[sample].convert_moles_wtPercent
-                    temperature_new = sample_wtPercent.melt_temperature(
+                    temperature_new = sample_wtPercent.temperature(
                         P_bar=P_loop.loc[sample]
                     )
                     sign = np.sign(temperatures_loop.loc[sample] - temperature_new)
 
                     olivine_amount = root_scalar(
-                        _root_temperature,
+                        self._root_temperature,
                         args=(
                             mi_moles_loop.loc[sample],
                             olivine.loc[sample],
@@ -383,7 +444,7 @@ class PEC_olivine:
                         sample
                     ].mul(olivine_amount)
                     # current iteration
-                    olivine_corrected_loop.loc[sample] = olivine_amount
+                    olivine_corrected_loop.loc[sample] = np.float16(olivine_amount)
                     # Running total
                     self.olivine_corrected.loc[
                         sample, "equilibration_crystallisation"
@@ -463,7 +524,7 @@ class PEC_olivine:
         """
 
         if not self.equilibrated.all():
-            raise RuntimeError("Inclusion compositions have not all been equilibrated")
+            raise RuntimeError("not all inclusion compositions have been equilibrated")
 
         # Get settings
         stepsize = kwargs.get(
@@ -526,7 +587,7 @@ class PEC_olivine:
                 ##### Exchange Fe-Mg to keep Kd equilibrium #####
                 for sample in mi_moles_loop.index:
                     exchange_amount = root_scalar(
-                        _root_Kd,
+                        self._root_Kd,
                         args=(
                             mi_moles_loop.loc[sample],
                             FeMg_vector,

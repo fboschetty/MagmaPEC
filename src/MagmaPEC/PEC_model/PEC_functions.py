@@ -1,5 +1,5 @@
 from MagmaPandas.configuration import configuration
-from MagmaPandas.Fe_redox import Fe_redox
+from MagmaPandas.Fe_redox import Fe3Fe2_models
 from MagmaPandas.fO2 import fO2_QFM
 from MagmaPandas.Kd.Ol_melt import calculate_FeMg_Kd
 
@@ -8,7 +8,7 @@ def _root_temperature(olivine_amount, melt_x_moles, olivine_x_moles, T_K, P_bar)
 
     melt_x_new = melt_x_moles + olivine_x_moles.mul(olivine_amount)
     melt_x_new = melt_x_new.normalise()
-    temperature_new = melt_x_new.convert_moles_wtPercent.melt_temperature(P_bar=P_bar)
+    temperature_new = melt_x_new.convert_moles_wtPercent.temperature(P_bar=P_bar)
 
     return T_K - temperature_new
 
@@ -22,19 +22,19 @@ def _root_Kd(exchange_amount, melt_x_moles, exchange_vector, forsterite, P_bar, 
     return Kd_equilibrium - Kd_real
 
 
-def calculate_Kds(melt_x_moles, P_bar, forsterite, **kwargs):
+def calculate_Kds(melt_x_moles, P_bar, forsterite, offset_parameters=0, **kwargs):
 
-    Fe3Fe2_model = getattr(Fe_redox, configuration.Fe3Fe2_model)
-    Kd_model = calculate_FeMg_Kd
+    Fe3Fe2_model = Fe3Fe2_models[configuration.Fe3Fe2_model]
+    calculate_Kd = calculate_FeMg_Kd
     dQFM = kwargs.get("dQFM", configuration.dQFM)
 
-    T_K = melt_x_moles.convert_moles_wtPercent.melt_temperature(P_bar)
+    T_K = melt_x_moles.convert_moles_wtPercent.temperature(P_bar)
     fO2 = fO2_QFM(dQFM, T_K, P_bar)
-    Fe3Fe2 = Fe3Fe2_model(melt_x_moles, T_K, fO2)
+    Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(melt_x_moles, T_K, fO2)
 
     Kd_observed = calculate_observed_Kd(melt_x_moles, Fe3Fe2, forsterite)
 
-    Kd_eq = Kd_model(melt_x_moles, forsterite, T_K, Fe3Fe2, P_bar=P_bar)
+    Kd_eq = calculate_Kd(melt_x_moles, forsterite, T_K, Fe3Fe2, P_bar=P_bar)
 
     return Kd_eq, Kd_observed
 
