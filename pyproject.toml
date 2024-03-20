@@ -23,7 +23,10 @@ dependencies = [
     "matplotlib-label-lines",
     "matplotlib",
     "elementMass",
-    "MagmaPandas"
+    "magmapandas",
+    "ipython",
+    "scikit-learn",
+    "statsmodels",
 ]
 
 [project.urls]
