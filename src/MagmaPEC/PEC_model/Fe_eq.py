@@ -12,8 +12,8 @@ from MagmaPandas.MagmaFrames import Melt
 from MagmaPandas.MagmaSeries import MagmaSeries
 from scipy.optimize import root_scalar
 
-from ..PEC_configuration import PEC_configuration
-from .PEC_functions import _root_temperature
+from MagmaPEC.PEC_configuration import PEC_configuration
+from MagmaPEC.PEC_model.PEC_functions import _root_temperature
 
 
 def Fe_equilibrate(
@@ -114,6 +114,7 @@ def Fe_equilibrate(
             mi_moles.iloc[-1],
             temperature=temperature,
             fO2=fO2,
+            Fe2_behaviour=Fe2_behaviour,
             Fe3Fe2_model=Fe3Fe2_model,
         )
         Kd_equilibrium = calculate_Kd(
@@ -141,8 +142,8 @@ def Fe_equilibrate(
             olivine_crystallised, olivine_crystallised[-1] + olivine_amount
         )
         # mi_moles = mi_moles.normalise()
-        temperature_new = mi_moles.loc[idx].convert_moles_wtPercent.temperature(
-            P_bar=P_bar
+        temperature_new = (
+            mi_moles.loc[idx].convert_moles_wtPercent().temperature(P_bar=P_bar)
         )
         ######################################################
         # New equilibrium Kd and Fe speciation
@@ -150,6 +151,7 @@ def Fe_equilibrate(
             mi_moles.iloc[-1],
             temperature=temperature,
             fO2=fO2,
+            Fe2_behaviour=Fe2_behaviour,
             Fe3Fe2_model=Fe3Fe2_model,
         )
         Kd_equilibrium = calculate_Kd(
@@ -172,6 +174,7 @@ def Fe_equilibrate(
                 mi_moles.iloc[-1],
                 temperature=temperature,
                 fO2=fO2,
+                Fe2_behaviour=Fe2_behaviour,
                 Fe3Fe2_model=Fe3Fe2_model,
             )
             Kd_equilibrium = calculate_Kd(
@@ -184,7 +187,7 @@ def Fe_equilibrate(
             Kd_real = melt_MgFe / olivine_MgFe
             stepsize = stepsize / decrease_factor
     # Recalculate compositions to oxide wt. %
-    equilibrated_composition = mi_moles.convert_moles_wtPercent
+    equilibrated_composition = mi_moles.convert_moles_wtPercent()
 
     if len(olivine_crystallised) == 1:
         olivine_crystallised = np.array([0])
@@ -213,8 +216,8 @@ def _calculate_Fe2(
     m_fractions = mol_fractions.copy()
     m_fractions = m_fractions.normalise()
     if Fe2_behaviour == "closed system":
-        Fe2_FeTotal = 1
         Fe3Fe2 = mol_fractions.loc["Fe2O3"] * 2 / mol_fractions.loc["FeO"]
+        Fe2_FeTotal = 1 / (1 + Fe3Fe2)
     elif Fe2_behaviour == "buffered":
         Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(m_fractions, temperature, fO2)
         Fe2_FeTotal = 1 / (1 + Fe3Fe2)

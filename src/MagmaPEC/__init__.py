@@ -1,2 +1,3 @@
 # from .PEC import *
-from .PEC_model import *
+from MagmaPEC.error_propagation import *
+from MagmaPEC.PEC_model import *

@@ -1,6 +1,6 @@
-from MagmaPandas.parse_io.validate import _check_setter, _check_value
+from MagmaPandas.parse_io.validate import _check_setter
 
-Fe2_options = ["buffered", "incompatible"]
+Fe2_options = ["buffered", "closed system"]
 
 
 class _meta_PEC_configuration(type):
@@ -33,7 +33,7 @@ class _meta_PEC_configuration(type):
         return cls._stepsize_equilibration
 
     @stepsize_equilibration.setter
-    @_check_value("value", [0, 1])
+    @_check_setter((0.0, 1.0))
     def stepsize_equilibration(cls, value):
         cls._stepsize_equilibration = value
 
@@ -42,7 +42,7 @@ class _meta_PEC_configuration(type):
         return cls._stepsize_crystallisation
 
     @stepsize_crystallisation.setter
-    @_check_value("value", [0, 1])
+    @_check_setter((0.0, 1.0))
     def stepsize_crystallisation(cls, value):
         cls._stepsize_crystallisation = value
 
@@ -51,7 +51,7 @@ class _meta_PEC_configuration(type):
         return cls._decrease_factor
 
     @decrease_factor.setter
-    @_check_value("value", [1, 50])
+    @_check_setter((1, 50))
     def decrease_factor(cls, value):
         cls._decrease_factor = value
 
@@ -74,7 +74,7 @@ class _meta_PEC_configuration(type):
         new_line = "\n"
 
         message = (
-            f"{new_line}{' Post-entrapment modification ':#^{pad_total}}"
+            f"{new_line}{' Post-entrapment crystallisation ':#^{pad_total}}"
             f"{new_line}{' correction model ':#^{pad_total}}"
             f"{new_line}{'Settings':_<{pad_total}}"
         )
@@ -90,8 +90,30 @@ class _meta_PEC_configuration(type):
 
 
 class PEC_configuration(metaclass=_meta_PEC_configuration):
+    """
+    Class for configuring the post-entrapment crystallisation (PEC) correction model
+
+    Attributes
+    ----------
+    Fe2_behaviour : str
+        behaviour of Fe2+. Available options: 'buffered' and 'closed system'. Default value: 'buffered'
+    stepsize_equilibration : float
+        stepsize in Fe-Mg cation exchange during the equilibration stage. Default value: 0.002 moles
+    stepsize_crystallisation : float
+        stepsize of olivine crystallisation/melting during the crystallisation stage. Default value: 0.05 moles
+    decrease_factor : float, int
+        decrease factor for Fe-Mg exchange and olivine crystallisation/melting stepsizes after overstepping convergence values. Default value: 5.
+    FeO_converge    : float
+        value within which melt FeO and target FeO are considered the same. Default value: 0.05 wt. %
+    Kd_converge : float
+        value within which modelled and observed olivine-melt Fe-Mg Kd are considered the same. Default value: 0.001
+    """
+
     @classmethod
     def reset(cls):
+        """
+        Reset to default values
+        """
         cls._Fe2_behaviour = "buffered"
         cls._stepsize_equilibration = 0.002
         cls._stepsize_crystallisation = 0.05

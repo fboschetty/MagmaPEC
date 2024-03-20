@@ -83,7 +83,9 @@ def crystallisation_correction(
     FeMg_vector.loc[["FeO", "MgO"]] = 1, -1
     # Inclusion starting FeO
     FeO = inclusion["FeO"]
-    temperature_old = mi_moles.iloc[-1].convert_moles_wtPercent.temperature(P_bar=P_bar)
+    temperature_old = (
+        mi_moles.iloc[-1].convert_moles_wtPercent().temperature(P_bar=P_bar)
+    )
     # Function to calculate Kds
     calculate_Kd = partial(calculate_Kds, P_bar=P_bar, forsterite=forsterite, dQFM=dQFM)
 
@@ -95,7 +97,7 @@ def crystallisation_correction(
         stepsize = -stepsize
 
     ##### OLIVINE MELTING/CRYSTALLISATION LOOP #####
-    mi_wtPercent = mi_moles.convert_moles_wtPercent
+    mi_wtPercent = mi_moles.convert_moles_wtPercent()
 
     while not np.isclose(FeO, FeO_target, atol=converge, rtol=0):
 
@@ -122,7 +124,7 @@ def crystallisation_correction(
         mi_moles.loc[idx] = mi_moles.loc[idx] + FeMg_vector.mul(exchange_amount)
         # mi_moles = mi_moles.normalise()
         #################################################
-        mi_wtPercent = mi_moles.convert_moles_wtPercent
+        mi_wtPercent = mi_moles.convert_moles_wtPercent()
         FeO = mi_wtPercent.loc[idx, "FeO"]
 
         if calculate_FeO_target:
@@ -136,7 +138,7 @@ def crystallisation_correction(
         if decrease_stepsize:
             mi_moles.drop(index=idx, inplace=True)
             # olivine_corrected.drop(index=idx, inplace=True)
-            mi_wtPercent = mi_moles.convert_moles_wtPercent
+            mi_wtPercent = mi_moles.convert_moles_wtPercent()
             idx = mi_wtPercent.index[-1]
             FeO = mi_wtPercent.loc[idx, "FeO"]
             stepsize = stepsize / decrease_factor
@@ -145,7 +147,7 @@ def crystallisation_correction(
     temperature_new = mi_wtPercent.iloc[-1].temperature(P_bar)
     olivine_corrected = mi_moles.index.values
     if olivine_corrected.max() == 0:
-        mi_wtPercent = mi_moles.convert_moles_wtPercent
+        mi_wtPercent = mi_moles.convert_moles_wtPercent()
 
     return (
         mi_wtPercent,

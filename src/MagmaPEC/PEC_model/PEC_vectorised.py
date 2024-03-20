@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -24,26 +24,61 @@ from MagmaPandas.fO2 import fO2_QFM
 from MagmaPandas.Kd.Ol_melt import Kd_models, calculate_FeMg_Kd
 from MagmaPandas.MagmaFrames import Melt, Olivine
 
-from ..PEC_configuration import PEC_configuration
-from .cryst_correction import crystallisation_correction
-from .Fe_eq import Fe_equilibrate
+from MagmaPEC.PEC_configuration import PEC_configuration
+from MagmaPEC.PEC_model.cryst_correction import crystallisation_correction
+from MagmaPEC.PEC_model.Fe_eq import Fe_equilibrate
 
 # from .PEC_functions import _root_Kd, _root_temperature
 
 
 class PEC_olivine:
+    # TODO link to configuration documentation.
+    """
+    Class for post-entrapment crystallisation (PEC) correction of olivine-hosted melt inclusions.
+
+    Model settings are controlled by the global PEC configuration.
+
+    Parameters
+    ----------
+    inclusions : :py:class:`~magmapandas:MagmaPandas.MagmaFrames.melt.Melt`
+        melt inclusion compositions in oxide wt. %
+    olivines : :py:class:`~magmapandas:MagmaPandas.MagmaFrames.olivine.Olivine`, :py:class:`Pandas Series <pandas:pandas.Series>`, float
+        Olivine compositions in oxide wt. % as Olivine MagmaFrame, or olivine forsterite contents as pandas Series or float.
+    P_bar : float, :py:class:`Pandas Series <pandas:pandas.Series>`
+        Pressures in bar
+    FeO_target : float, :py:class:`Pandas Series <pandas:pandas.Series>`, Callable
+        Melt inclusion initial FeO content as a fixed value for all inclusions, inclusion specific values, or a predictive equation based on melt composition. The callable needs to accept a :py:class:`Pandas DataFrame <pandas:pandas.DataFrame>` with melt compositions in oxide wt. % as input and return an array-like object with initial FeO contents per inclusion.
+    Fe3Fe2_offset_parameters : float, array-like
+        offsets of calculated melt Fe3+/Fe2+ ratios in standard deviations.
+    Kd_offset_parameters : float, array-like
+        offsets of calculated olivine-melt Fe-Mg Kd's in standard deviations.
+
+    Attributes
+    ----------
+    inclusions : :py:class:`~magmapandas:MagmaPandas.MagmaFrames.melt.Melt`
+        Melt inclusion compositions in oxide wt. %. Compositions are updated during the PEC correction procedure
+    P_bar : :py:class:`Pandas Series <pandas:pandas.Series>`
+        Pressures in bar
+    FeO_target : float, :py:class:`Pandas Series <pandas:pandas.Series>`, Callable
+        Melt inclusion initial FeO contents.
+    olivine_corrected : :py:class:`Pandas DataFrame <pandas:pandas.DataFrame>`
+        Dataframe with columns *equilibration_crystallisation*, *PE_crystallisation* and *total_crystallisation*, storing total PEC and crystallisation amounts during the equilibration and crystallisation stages.
+
+
+    """
+
     def __init__(
         self,
         inclusions: Melt,
         olivines: Union[Olivine, pd.Series, float],
         P_bar: Union[float, int, pd.Series],
         FeO_target: Union[float, pd.Series, callable],
-        Fe3Fe2_offset_parameters=0,
-        Kd_offset_parameters=0,
+        Fe3Fe2_offset_parameters: float | np.ndarray = 0.0,
+        Kd_offset_parameters: float | np.ndarray = 0.0,
         **kwargs,
     ):
-        self.Fe3Fe2_offset_parameters = Fe3Fe2_offset_parameters
-        self.Kd_offset_parameters = Kd_offset_parameters
+        self._Fe3Fe2_offset_parameters = Fe3Fe2_offset_parameters
+        self._Kd_offset_parameters = Kd_offset_parameters
 
         self.olivine_corrected = pd.DataFrame(
             0.0,
@@ -162,16 +197,16 @@ class PEC_olivine:
 
     @property
     def olivine(self):
-        return self._olivine.convert_moles_wtPercent
+        return self._olivine.convert_moles_wtPercent()
 
     @olivine.setter
     def olivine(self, value):
         print("Olivine is read only")
 
     @property
-    def equilibrated(self):
+    def equilibrated(self) -> pd.Series:
         """
-        Check which inclusions are in equilibrium with their host olivine
+        Booleans indicating which inclusions are in equilibrium with their host olivine
         based on modelled and observed Fe-Mg exchange Kd's.
         """
         Kd_converge = getattr(PEC_configuration, "Kd_converge") * 1.5
@@ -184,9 +219,9 @@ class PEC_olivine:
         )
 
     @property
-    def Fe_loss(self):
+    def Fe_loss(self) -> pd.Series:
         """
-        Check which inclusions have experienced Fe loss
+        Booleans indicating which inclusions have experienced Fe loss
         """
         FeO_converge = getattr(PEC_configuration, "FeO_converge")
         if self._FeO_as_function:
@@ -204,7 +239,15 @@ class PEC_olivine:
             name="Fe_loss",
         )
 
-    def calculate_Fe3Fe2(self, **kwargs):
+    def calculate_Fe3Fe2(self, **kwargs) -> pd.Series:
+        """
+        Calculate melt inclusion Fe3+/Fe2+ ratios
+
+        Returns
+        -------
+        Fe3Fe2 : pd.Series
+            melt inclusion Fe3+/Fe2+ ratios.
+        """
 
         Fe3Fe2_model = Fe3Fe2_models[configuration.Fe3Fe2_model]
 
@@ -212,21 +255,21 @@ class PEC_olivine:
         pressure = kwargs.get("P_bar", self.P_bar)
         dQFM = kwargs.get("dQFM", configuration.dQFM)
 
-        T_K = kwargs.get("T_K", melt.convert_moles_wtPercent.temperature(pressure))
+        T_K = kwargs.get("T_K", melt.convert_moles_wtPercent().temperature(pressure))
         fO2 = kwargs.get("fO2", fO2_QFM(dQFM, T_K, pressure))
 
         Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(
             Melt_mol_fractions=melt, T_K=T_K, fO2=fO2, P_bar=pressure
         )
         offset = Fe3Fe2_model.get_offset(
-            Fe3Fe2=Fe3Fe2, offset_parameters=self.Fe3Fe2_offset_parameters
+            Fe3Fe2=Fe3Fe2, offset_parameters=self._Fe3Fe2_offset_parameters
         )
 
         return Fe3Fe2 + offset
 
-    def calculate_Kds(self, **kwargs):
+    def calculate_Kds(self, **kwargs) -> Tuple[pd.Series, pd.Series]:
         """
-        Calculate observed and modelled Kds
+        Model equilibrium Kds and calculate measured Kds
         """
         Kd_model = Kd_models[configuration.Kd_model]
         calculate_Kd = calculate_FeMg_Kd
@@ -237,7 +280,7 @@ class PEC_olivine:
         pressure = kwargs.get("P_bar", self.P_bar)
         forsterite = kwargs.get("forsterite", self._olivine.forsterite)
 
-        T_K = kwargs.get("T_K", melt.convert_moles_wtPercent.temperature(pressure))
+        T_K = kwargs.get("T_K", melt.convert_moles_wtPercent().temperature(pressure))
         fO2 = kwargs.get("fO2", fO2_QFM(dQFM, T_K, pressure))
 
         Fe3Fe2 = self.calculate_Fe3Fe2(
@@ -248,14 +291,15 @@ class PEC_olivine:
         melt_MgFe = melt["MgO"] / (melt["FeO"] * Fe2_FeTotal)
         olivine_MgFe = forsterite / (1 - forsterite)
         Kd_observed = melt_MgFe / olivine_MgFe
+
         if isinstance(Kd_observed, pd.Series):
             Kd_observed.rename("real", inplace=True)
             Kd_observed.index.name = "name"
 
         Kd_equilibrium = calculate_Kd(melt, forsterite, T_K, Fe3Fe2, P_bar=pressure)
         offset = Kd_model.get_offset(
-            melt_composition=melt.convert_moles_wtPercent,
-            offset_parameters=self.Kd_offset_parameters,
+            melt_composition=melt.convert_moles_wtPercent(),
+            offset_parameters=self._Kd_offset_parameters,
         )
         Kd_equilibrium = Kd_equilibrium + offset
 
@@ -276,7 +320,7 @@ class PEC_olivine:
 
         name, inclusion, olivine, temperature, pressure = sample
 
-        inclusion_wtPercent = inclusion.convert_moles_wtPercent
+        inclusion_wtPercent = inclusion.convert_moles_wtPercent()
         temperature_new = inclusion_wtPercent.temperature(pressure)
 
         sign = np.sign(temperature - temperature_new)
@@ -300,7 +344,7 @@ class PEC_olivine:
 
         melt_x_new = melt_x_moles + olivine_x_moles.mul(olivine_amount)
         melt_x_new = melt_x_new.normalise()
-        temperature_new = melt_x_new.convert_moles_wtPercent.temperature(P_bar=P_bar)
+        temperature_new = melt_x_new.convert_moles_wtPercent().temperature(P_bar=P_bar)
 
         return T_K - temperature_new
 
@@ -317,7 +361,9 @@ class PEC_olivine:
         return Kd_equilibrium - Kd_real
 
     def Fe_equilibrate(self, inplace=False, **kwargs):
-        """ """
+        """
+        Equilibrate Fe and Mg between melt inclusions and their olivine host via diffusive Fe-Mg exchange
+        """
 
         # Get settings
         stepsize = kwargs.get(
@@ -422,7 +468,9 @@ class PEC_olivine:
 
                 # Single core
                 for sample in mi_moles_loop.index:
-                    sample_wtPercent = mi_moles_loop.loc[sample].convert_moles_wtPercent
+                    sample_wtPercent = mi_moles_loop.loc[
+                        sample
+                    ].convert_moles_wtPercent()
                     temperature_new = sample_wtPercent.temperature(
                         P_bar=P_loop.loc[sample]
                     )
@@ -498,7 +546,7 @@ class PEC_olivine:
 
                 bar(sum(~disequilibrium) / total_inclusions)
 
-        corrected_compositions = mi_moles.convert_moles_wtPercent
+        corrected_compositions = mi_moles.convert_moles_wtPercent()
         temperatures_new = corrected_compositions.temperature(P_bar=P_bar)
 
         self.inclusions = corrected_compositions
@@ -604,7 +652,7 @@ class PEC_olivine:
                 # mi_moles_loop = mi_moles_loop.normalise()
                 #################################################
                 # Recalculate FeO
-                mi_wtPercent = mi_moles_loop.convert_moles_wtPercent
+                mi_wtPercent = mi_moles_loop.convert_moles_wtPercent()
                 FeO = mi_wtPercent["FeO"]
                 if self._FeO_as_function:
                     FeO_target_loop = self.FeO_function(mi_wtPercent)
@@ -634,7 +682,7 @@ class PEC_olivine:
                     )
                 # Copy loop data to the main variables
                 mi_moles.loc[mi_moles_loop.index, :] = mi_moles_loop.copy()
-                mi_wtPercent = mi_moles.convert_moles_wtPercent
+                mi_wtPercent = mi_moles.convert_moles_wtPercent()
                 FeO = mi_wtPercent["FeO"]
                 if self._FeO_as_function:
                     FeO_target = self.FeO_function(mi_wtPercent)
@@ -648,7 +696,7 @@ class PEC_olivine:
                 FeO_mismatch = FeO_mismatch_new
                 bar(sum(~FeO_mismatch) / total_inclusions)
 
-        corrected_compositions = mi_moles.convert_moles_wtPercent
+        corrected_compositions = mi_moles.convert_moles_wtPercent()
 
         self.olivine_corrected["total_crystallisation"] = self.olivine_corrected[
             ["equilibration_crystallisation", "PE_crystallisation"]
@@ -661,7 +709,10 @@ class PEC_olivine:
                 corrected_compositions.temperature(P_bar),
             )
 
-    def correct(self, **kwargs):
+    def correct(self, **kwargs) -> Tuple[Melt, pd.DataFrame, pd.Series]:
+        """
+        Correct inclusions for PEC
+        """
 
         self.Fe_equilibrate(inplace=True, **kwargs)
         corrected_compositions, olivine_corrected, temperatures = self.correct_olivine(
@@ -669,15 +720,16 @@ class PEC_olivine:
         )
         return corrected_compositions, olivine_corrected, temperatures
 
-    def correct_inclusion(self, index, plot=True, **kwargs):
+    def correct_inclusion(self, index, plot=True, **kwargs) -> pd.DataFrame:
+        """Correct a single inclusion for PEC"""
 
         if type(index) == int:
             index = self.inclusions_uncorrected.index[index]
 
-        inclusion = self.inclusions_uncorrected.loc[index].copy()
-        olivine = self._olivine.loc[index].copy()
-        FeO_target = self.FeO_target.loc[index]
-        P_bar = self.P_bar.loc[index]
+        inclusion = self.inclusions_uncorrected.loc[index].copy().squeeze()
+        olivine = self._olivine.loc[index].copy().squeeze()
+        FeO_target = self.FeO_target.loc[index].squeeze()
+        P_bar = self.P_bar.loc[index].squeeze()
 
         if self._FeO_as_function:
             FeO_target = self.FeO_function
@@ -707,13 +759,14 @@ class PEC_olivine:
 
             set_markers = kwargs.get("markers", True)
 
-            import geoplot as p
+            import geoplot as gp
 
             fontsize = 14
 
             fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=False)
+            plt.grid(True, color="whitesmoke")
 
-            colors = p.colors.bella.by_key()["color"]
+            colors = gp.colors.flatDesign.by_key()["color"]
 
             linewidth = 5
             markersize = 90
@@ -727,7 +780,9 @@ class PEC_olivine:
                 color=colors[1],
                 # label="equilibration",
                 linewidth=linewidth,
-                alpha=0.7,
+                mec="k",
+                markersize=10,
+                # alpha=0.7,
             )
             plt.plot(
                 corrected["MgO"],
@@ -735,7 +790,9 @@ class PEC_olivine:
                 ["-", ".-"][set_markers],
                 color=colors[2],
                 linewidth=linewidth,
-                alpha=0.7,
+                mec="k",
+                markersize=10,
+                # alpha=0.7,
             )
             ax.scatter(
                 equilibrated.loc[equilibrated.index[0], "MgO"],
@@ -773,20 +830,26 @@ class PEC_olivine:
             if self._FeO_as_function:
                 FeO_inital = self.FeO_function(corrected)
                 ax.plot(
-                    corrected["MgO"], FeO_inital, "-", color=FeO_color, linestyle="-"
+                    corrected["MgO"],
+                    FeO_inital,
+                    "-",
+                    color=FeO_color,
                 )
                 FeO_target = sum((min(FeO_inital), max(FeO_inital))) / 2
             else:
                 ax.axhline(FeO_target, linestyle="-", color=FeO_color, linewidth=1.5)
 
             FeO_line = ax.get_lines()[-1]
-            labelLine(
-                FeO_line,
-                x=middle,
-                label="initial FeO",
-                size=fontsize * 0.8,
-                color=FeO_color,
-            )
+            try:
+                labelLine(
+                    FeO_line,
+                    x=middle,
+                    label="initial FeO",
+                    size=fontsize * 0.8,
+                    color=FeO_color,
+                )
+            except ValueError:
+                pass
 
             ax.set_ylim(ax.get_ylim()[0], max((FeO_target * 1.03, ax.get_ylim()[1])))
 

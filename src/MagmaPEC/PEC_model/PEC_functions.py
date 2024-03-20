@@ -8,7 +8,7 @@ def _root_temperature(olivine_amount, melt_x_moles, olivine_x_moles, T_K, P_bar)
 
     melt_x_new = melt_x_moles + olivine_x_moles.mul(olivine_amount)
     melt_x_new = melt_x_new.normalise()
-    temperature_new = melt_x_new.convert_moles_wtPercent.temperature(P_bar=P_bar)
+    temperature_new = melt_x_new.convert_moles_wtPercent().temperature(P_bar=P_bar)
 
     return T_K - temperature_new
 
@@ -28,7 +28,7 @@ def calculate_Kds(melt_x_moles, P_bar, forsterite, offset_parameters=0, **kwargs
     calculate_Kd = calculate_FeMg_Kd
     dQFM = kwargs.get("dQFM", configuration.dQFM)
 
-    T_K = melt_x_moles.convert_moles_wtPercent.temperature(P_bar)
+    T_K = melt_x_moles.convert_moles_wtPercent().temperature(P_bar)
     fO2 = fO2_QFM(dQFM, T_K, P_bar)
     Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(melt_x_moles, T_K, fO2)
 
