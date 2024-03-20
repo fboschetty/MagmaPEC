@@ -53,7 +53,7 @@ class FeOi_prediction:
 
     @property
     def errors(self):
-        """Errors on fitted regression coefficients"""
+        """One standard deviation errors on ``coefficients``"""
 
         if not hasattr(self, "_slopes_error"):
             raise AttributeError("No regression found")
