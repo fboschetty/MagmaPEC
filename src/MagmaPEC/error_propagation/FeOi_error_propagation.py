@@ -1,3 +1,4 @@
+from functools import partial
 from typing import List
 
 import numpy as np
@@ -42,6 +43,31 @@ class FeOi_prediction:
         self.FeO = FeO
 
         self.predictors = x.columns.values
+
+    @property
+    def coefficients(self):
+        """Fitted regression coefficients"""
+
+        if not hasattr(self, "slopes"):
+            raise AttributeError("No regression found")
+
+        return pd.concat([pd.Series({"intercept": self.intercept}), self.slopes])
+
+    @property
+    def errors(self):
+        """Errors on fitted regression coefficients"""
+
+        if not hasattr(self, "slopes_error"):
+            raise AttributeError("No regression found")
+
+        return pd.concat(
+            [pd.Series({"intercept": self.intercept_error}), self.slopes_error]
+        )
+
+    @property
+    def model(self) -> callable:
+        """FeO prediction model"""
+        return partial(self._FeO_initial_func, coefficients=self.coefficients)
 
     def get_OLS_coefficients(self) -> None:
         """
@@ -292,6 +318,10 @@ class FeOi_prediction:
                 coefficients["intercept"]
                 + composition[oxides].mul(coefficients.loc[oxides]).sum()
             ).astype(np.float32)
+
+    def predict(self, melt: pd.DataFrame) -> pd.Series:
+        """Predict melt FeO contents with the current model"""
+        return self.model()(melt)
 
 
 # A wrapper for statsmodel, for use within sklearn
