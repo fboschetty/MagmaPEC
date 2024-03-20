@@ -71,7 +71,7 @@ class FeOi_prediction:
         """
         Get linear regression coefficients by ordinary least squares.
 
-        Uses elements in ``predictors`` to predict FeO. Results are stored in ``intercept``, ``slopes``, ``intercept_error`` and ``slopes_error``.
+        Uses elements in ``predictors`` to predict FeO. Results are stored in ``coefficients`` and `errors``.
         """
 
         reg_ols = self._OLS_fit()
