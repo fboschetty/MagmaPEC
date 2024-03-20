@@ -27,14 +27,12 @@ class FeOi_prediction:
     ----------
     predictors : List[str]
         names of elements used as predictors. Defaults to all columns in ``x``
-    intercept   : float
-        fitted intercept
-    intercept_error : float
-        regression error on ``intercept``
-    slopes : pandas Series
-        fitted slopes for elements in ``predictors``
-    slopes_error : pandas Series
-        regression errors on ``slopes``
+    coefficients   : pandas Series
+        fitted regression coefficients
+    errors : pandas Series
+        one standard deviation errors on ``coefficients``
+    model : Callable
+        FeOi prediction model
     """
 
     def __init__(self, x: pd.DataFrame, FeO: pd.Series):
