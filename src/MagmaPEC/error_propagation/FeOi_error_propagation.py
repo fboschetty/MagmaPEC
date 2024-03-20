@@ -48,20 +48,20 @@ class FeOi_prediction:
     def coefficients(self):
         """Fitted regression coefficients"""
 
-        if not hasattr(self, "slopes"):
+        if not hasattr(self, "_slopes"):
             raise AttributeError("No regression found")
 
-        return pd.concat([pd.Series({"intercept": self.intercept}), self.slopes])
+        return pd.concat([pd.Series({"intercept": self._intercept}), self._slopes])
 
     @property
     def errors(self):
         """Errors on fitted regression coefficients"""
 
-        if not hasattr(self, "slopes_error"):
+        if not hasattr(self, "_slopes_error"):
             raise AttributeError("No regression found")
 
         return pd.concat(
-            [pd.Series({"intercept": self.intercept_error}), self.slopes_error]
+            [pd.Series({"intercept": self._intercept_error}), self._slopes_error]
         )
 
     @property
@@ -78,11 +78,11 @@ class FeOi_prediction:
 
         reg_ols = self._OLS_fit()
 
-        self.slopes = reg_ols.params
-        self.slopes_error = reg_ols.bse
+        self._slopes = reg_ols.params
+        self._slopes_error = reg_ols.bse
 
-        self.intercept = self.slopes.pop("const")
-        self.intercept_error = self.slopes_error.pop("const")
+        self._intercept = self._slopes.pop("const")
+        self._intercept_error = self._slopes_error.pop("const")
 
     def random_sample_coefficients(self, n: int) -> pd.DataFrame:
         """
@@ -109,9 +109,9 @@ class FeOi_prediction:
 
         coeff_MC = pd.DataFrame(
             np.random.normal(
-                loc=self.slopes, scale=self.slopes_error, size=(n, len(self.slopes))
+                loc=self._slopes, scale=self._slopes_error, size=(n, len(self._slopes))
             ),
-            columns=self.slopes.index,
+            columns=self._slopes.index,
             dtype=np.float16,
         )
 
