@@ -6,7 +6,9 @@ ipython
 pandas
 numpy
 scipy
+scikit-learn
+statsmodels
 alive_progress
 matplotlib
 matplotlib-label-lines
-MagmaPandas
+magmapandas
