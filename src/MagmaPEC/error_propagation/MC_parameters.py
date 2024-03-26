@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Dict
+from typing import Dict, Union
 
 import MagmaPandas as mp
 import numpy as np
@@ -43,12 +43,19 @@ class PEC_MC_parameters:
 
     def __init__(
         self,
-        melt_errors: None | pd.Series = None,
-        olivine_errors: None | pd.Series = None,
+        melt_errors: None | pd.Series | pd.DataFrame | np.ndarray = None,
+        olivine_errors: None | pd.Series | pd.DataFrame | np.ndarray = None,
         FeOi_errors: float | FeOi_prediction = 0.0,
         Fe3Fe2: bool = False,
         Kd: bool = False,
     ):
+        for val, name in zip((melt_errors, olivine_errors), ("melt", "olivine")):
+            if (val is not None) & (
+                not isinstance(val, (pd.Series, pd.DataFrame, np.ndarray))
+            ):
+                raise TypeError(
+                    f"{name} errors need to be None, Series, DataFrame or Array"
+                )
         self.melt_errors = melt_errors
         self.olivine_errors = olivine_errors
         self.FeOi_errors = FeOi_errors
@@ -70,45 +77,40 @@ class PEC_MC_parameters:
         Fe3Fe2_model = Fe3Fe2_models[mp.configuration.Fe3Fe2_model]
         Kd_model = Kd_models[mp.configuration.Kd_model]
 
+        # melt
         if self.melt_errors is None:
             self.parameters["melt"] = np.repeat(0.0, n)
         else:
-            self.parameters["melt"] = pd.DataFrame(
-                np.random.normal(
-                    loc=0, scale=self.melt_errors, size=(n, len(self.melt_errors))
-                ),
-                columns=self.melt_errors.index,
+            self.parameters["melt"] = np.random.normal(
+                loc=0, scale=self.melt_errors, size=(n, *self.melt_errors.shape)
             )
 
+        # olivine
         if self.olivine_errors is None:
             self.parameters["olivine"] = np.repeat(0.0, n)
         else:
-            self.parameters["olivine"] = pd.DataFrame(
-                np.random.normal(
-                    loc=0, scale=self.olivine_errors, size=(n, len(self.olivine_errors))
-                ),
-                columns=self.olivine_errors.index,
+            self.parameters["olivine"] = np.random.normal(
+                loc=0, scale=self.olivine_errors, size=(n, *self.olivine_errors.shape)
             )
-
+        # FeOi
         if isinstance(self.FeOi_errors, (float, int)):
             self.parameters["FeOi"] = np.random.normal(
                 loc=0, scale=self.FeOi_errors, size=n
             )
-        elif isinstance(self.FeOi_errors, pd.Series):
-            self.parameters["FeOi"] = pd.DataFrame(
-                np.random.normal(
-                    loc=0, scale=self.FeOi_errors, size=(n, len(self.FeOi_errors))
-                ),
-                columns=self.FeOi_errors.index,
+        elif isinstance(self.FeOi_errors, (pd.Series, np.ndarray)):
+            self.parameters["FeOi"] = np.random.normal(
+                loc=0, scale=self.FeOi_errors, size=(n, *self.FeOi_errors.shape)
             )
         elif isinstance(self.FeOi_errors, FeOi_prediction):
             self.parameters["FeOi"] = self.FeOi_errors.random_sample_coefficients(n=n)
 
+        # Fe3Fe2
         if self.Fe3Fe2:
             self.parameters["Fe3Fe2"] = Fe3Fe2_model.get_offset_parameters(n=n)
         else:
             self.parameters["Fe3Fe2"] = np.repeat(0.0, n)
 
+        # Kd
         if self.Kd:
             self.parameters["Kd"] = Kd_model.get_offset_parameters(n=n)
         else:

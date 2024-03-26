@@ -67,9 +67,15 @@ class PEC_MC:
             number of iterations in the Monte Carlo loop
         """
 
-        self.pec_MC = pd.DataFrame(columns=self.inclusions.index, index=range(n))
+        self.pec_MC = pd.DataFrame(
+            columns=self.inclusions.index, index=pd.Series(range(n), name="iteration")
+        )
         self.inclusions_MC = {
-            name: pd.DataFrame(columns=self.inclusions.columns, index=range(n))
+            name: Melt(
+                columns=list(self.inclusions.columns)
+                + ["isothermal_equilibration", "Kd_equilibration"],
+                index=pd.Series(range(n), name="iteration"),
+            )
             for name in self.inclusions.index
         }
 
@@ -101,10 +107,12 @@ class PEC_MC:
 
     def _process_MC_params(self, melt_err, olivine_err, FeOi_err):
 
-        melt_err = melt_err[1] if isinstance(melt_err, tuple) else melt_err
-        melt_MC = self.inclusions.add(melt_err, axis=1)
-        olivine_err = olivine_err[1] if isinstance(olivine_err, tuple) else olivine_err
-        olivine_MC = self.olivines.add(olivine_err, axis=1)
+        # melt_err = melt_err[1] if isinstance(melt_err, tuple) else melt_err
+        melt_MC = self.inclusions[self.inclusions.elements].add(melt_err, axis=1)
+        melt_MC[melt_MC < 0] = 0.0
+        # olivine_err = olivine_err[1] if isinstance(olivine_err, tuple) else olivine_err
+        olivine_MC = self.olivines[self.olivines.elements].add(olivine_err, axis=1)
+        olivine_MC[olivine_MC < 0] = 0.0
 
         if isinstance(FeOi_err, (float, int)):
             # for a fixed FeO error
@@ -135,8 +143,8 @@ class PEC_MC:
         )
 
         for inclusion, df in self.inclusions_MC.items():
-            self.inclusions_corr.loc[inclusion] = df.mean().values
-            self.inclusions_stddev.loc[inclusion] = df.std().values
+            self.inclusions_corr.loc[inclusion] = df[df.elements].mean().values
+            self.inclusions_stddev.loc[inclusion] = df[df.elements].std().values
 
         try:
             self.inclusions_stddev.drop(columns=["total_stddev"], inplace=True)
