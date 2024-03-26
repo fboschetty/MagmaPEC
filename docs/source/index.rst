@@ -15,7 +15,7 @@ MagmaPEC quickstart
 
 About
 -----
-MagmaPEC is a python based tool set for calculating post-entrapment crystallisation extents for olivine-hosted melt inclusions.
+MagmaPEC is a python based tool set for calculating post-entrapment crystallisation extents for olivine-hosted melt inclusions and includes error propagation of various parameters through a Monte-Carlo simulation.
 
 Installation
 ------------
