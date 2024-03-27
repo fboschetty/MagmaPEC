@@ -81,7 +81,7 @@ class PEC_olivine:
         self._Fe3Fe2_offset_parameters = Fe3Fe2_offset_parameters
         self._Kd_offset_parameters = Kd_offset_parameters
 
-        self.olivine_corrected = pd.DataFrame(
+        self._olivine_corrected = pd.DataFrame(
             0.0,
             columns=[
                 "equilibration_crystallisation",
@@ -190,7 +190,7 @@ class PEC_olivine:
 
     def reset(self):
         self.inclusions = self.inclusions_uncorrected.copy()
-        self.olivine_corrected = pd.DataFrame(
+        self._olivine_corrected = pd.DataFrame(
             0.0,
             columns=[
                 "equilibration_crystallisation",
@@ -201,6 +201,14 @@ class PEC_olivine:
         )
         if self._FeO_as_function:
             self.FeO_target = self.FeO_function(self.inclusions)
+
+    @property
+    def olivine_corrected(self):
+        return self._olivine_corrected.mul(100)
+
+    @olivine_corrected.setter
+    def olivine_corrected(self, value):
+        print("read only!")
 
     @property
     def olivine(self):
@@ -513,7 +521,7 @@ class PEC_olivine:
                     except ValueError:
                         # Catch inclusions that cannot reach isothermal equilibrium.
                         w.warn(f"{sample}: isothermal equilibration not reached")
-                        self.olivine_corrected.loc[
+                        self._olivine_corrected.loc[
                             sample, "equilibration_crystallisation"
                         ] = np.nan
                         error_samples.append(sample)
@@ -528,7 +536,7 @@ class PEC_olivine:
                     # current iteration
                     olivine_corrected_loop.loc[sample] = np.float16(olivine_amount)
                     # Running total
-                    self.olivine_corrected.loc[
+                    self._olivine_corrected.loc[
                         sample, "equilibration_crystallisation"
                     ] += olivine_amount
                 # mi_moles_loop = mi_moles_loop.normalise()
@@ -556,7 +564,7 @@ class PEC_olivine:
                     mi_moles_loop.drop(labels=idx_FeMg, axis=0, inplace=True)
                     Kd_eq_loop.drop(labels=idx_FeMg, axis=0, inplace=True)
                     Kd_real_loop.drop(labels=idx_FeMg, axis=0, inplace=True)
-                    self.olivine_corrected.loc[
+                    self._olivine_corrected.loc[
                         idx_FeMg, "equilibration_crystallisation"
                     ] -= olivine_corrected_loop.loc[idx_FeMg]
                     stepsize.loc[idx_FeMg] = stepsize_loop.loc[idx_FeMg].div(
@@ -588,8 +596,8 @@ class PEC_olivine:
         corrected_compositions = mi_moles.convert_moles_wtPercent()
 
         # Set compositions of inclusions with equilibration errors to NaNs.
-        idx_errors = self.olivine_corrected.index[
-            self.olivine_corrected["equilibration_crystallisation"].isna()
+        idx_errors = self._olivine_corrected.index[
+            self._olivine_corrected["equilibration_crystallisation"].isna()
         ]
         corrected_compositions.loc[idx_errors] = np.nan
 
@@ -599,7 +607,7 @@ class PEC_olivine:
         if not inplace:
             return (
                 corrected_compositions,
-                self.olivine_corrected["equilibration_crystallisation"].copy(),
+                self._olivine_corrected["equilibration_crystallisation"].copy(),
                 {"Equilibrium": Kd_equilibrium, "Real": Kd_real},
             )
 
@@ -641,7 +649,7 @@ class PEC_olivine:
         mi_moles = mi_moles.mul(
             (
                 1
-                + self.olivine_corrected.loc[
+                + self._olivine_corrected.loc[
                     remove_errors, "equilibration_crystallisation"
                 ]
             ),
@@ -685,7 +693,7 @@ class PEC_olivine:
                 mi_moles_loop = mi_moles_loop + olivine_loop.mul(stepsize_loop, axis=0)
 
                 # mi_moles_loop = mi_moles_loop.normalise()
-                self.olivine_corrected.loc[
+                self._olivine_corrected.loc[
                     idx_olivine, "PE_crystallisation"
                 ] += stepsize_loop
                 #################################################
@@ -717,7 +725,7 @@ class PEC_olivine:
                         # Catch inclusions that cannot reach Kd equilibrium
                         w.warn(f"{sample}: Kd equilibration not reached")
                         error_samples.append(sample)
-                        self.olivine_corrected.loc[sample, "PE_crystallisation"] = (
+                        self._olivine_corrected.loc[sample, "PE_crystallisation"] = (
                             np.nan
                         )
                         exchange_amount = 0.0
@@ -752,7 +760,7 @@ class PEC_olivine:
                     # Reverse one step and decrease stepsize
                     reverse_FeO = mi_moles_loop.index[decrease_stepsize_FeO]
                     mi_moles_loop.drop(labels=reverse_FeO, axis=0, inplace=True)
-                    self.olivine_corrected.loc[
+                    self._olivine_corrected.loc[
                         reverse_FeO, "PE_crystallisation"
                     ] -= stepsize_loop.loc[reverse_FeO]
                     stepsize.loc[reverse_FeO] = stepsize.loc[reverse_FeO].div(
@@ -782,7 +790,7 @@ class PEC_olivine:
 
         corrected_compositions = mi_moles.convert_moles_wtPercent()
 
-        self.olivine_corrected["total_crystallisation"] = self.olivine_corrected[
+        self._olivine_corrected["total_crystallisation"] = self._olivine_corrected[
             ["equilibration_crystallisation", "PE_crystallisation"]
         ].sum(axis=1)
         self.inclusions.loc[corrected_compositions.index] = (
@@ -790,15 +798,15 @@ class PEC_olivine:
         )
 
         # Set compositions of inclusions with equilibration errors to NaNs.
-        idx_errors = self.olivine_corrected.index[
-            self.olivine_corrected["PE_crystallisation"].isna()
+        idx_errors = self._olivine_corrected.index[
+            self._olivine_corrected["PE_crystallisation"].isna()
         ]
         self.inclusions.loc[idx_errors] = np.nan
 
         if not inplace:
             return (
                 corrected_compositions.copy(),
-                self.olivine_corrected.copy(),
+                self._olivine_corrected.mul(100),
                 corrected_compositions.temperature(P_bar),
             )
 
