@@ -193,6 +193,7 @@ def Fe_equilibrate(
         olivine_crystallised = np.array([0])
         temperature_new = temperature
 
+    olivine_crystallised *= 100
     equilibrated_composition.index = olivine_crystallised
 
     return (

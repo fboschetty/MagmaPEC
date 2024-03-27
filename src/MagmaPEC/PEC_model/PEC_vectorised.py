@@ -965,7 +965,7 @@ class PEC_olivine:
 
             handles = handles + [l.Line2D([0], [0], linewidth=0)]
 
-            labels = labels + [f"{total_corrected * 100:.2f} mol. %\nPEC correction"]
+            labels = labels + [f"{total_corrected:.2f} mol. %\nPEC correction"]
 
             ax.legend(
                 handles,

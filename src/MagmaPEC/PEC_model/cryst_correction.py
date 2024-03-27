@@ -31,7 +31,7 @@ def crystallisation_correction(
     Petrolog3: Integrated software for modeling crystallization processes
     Geochemistry, Geophysics, Geosystems, vol 12
     """
-    equilibration_crystallisation = kwargs.get("eq_crystallised", 0.0)
+    equilibration_crystallisation = kwargs.get("eq_crystallised", 0.0) / 100
     # Grab model parameters
     stepsize = kwargs.get(
         "stepsize", getattr(PEC_configuration, "stepsize_crystallisation")
@@ -145,7 +145,7 @@ def crystallisation_correction(
 
     Kd_equilibrium, Kd_real = calculate_Kd(mi_moles.iloc[-1].normalise())
     temperature_new = mi_wtPercent.iloc[-1].temperature(P_bar)
-    olivine_corrected = mi_moles.index.values
+    olivine_corrected = mi_moles.index.values * 100
     if olivine_corrected.max() == 0:
         mi_wtPercent = mi_moles.convert_moles_wtPercent()
 
