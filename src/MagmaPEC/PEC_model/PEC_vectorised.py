@@ -268,17 +268,21 @@ class PEC_olivine:
         Fe3Fe2_model = Fe3Fe2_models[configuration.Fe3Fe2_model]
 
         melt = kwargs.get("melt", self.inclusions.moles)
+        melt_wtpc = melt.convert_moles_wtPercent()
+
         pressure = kwargs.get("P_bar", self.P_bar)
         dQFM = kwargs.get("dQFM", configuration.dQFM)
 
-        T_K = kwargs.get("T_K", melt.convert_moles_wtPercent().temperature(pressure))
+        T_K = kwargs.get("T_K", melt_wtpc.temperature(pressure))
         fO2 = kwargs.get("fO2", fO2_QFM(dQFM, T_K, pressure))
 
         Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(
             Melt_mol_fractions=melt, T_K=T_K, fO2=fO2, P_bar=pressure
         )
         offset = Fe3Fe2_model.get_offset(
-            Fe3Fe2=Fe3Fe2, offset_parameters=self._Fe3Fe2_offset_parameters
+            melt_composition=melt,
+            Fe3Fe2=Fe3Fe2,
+            offset_parameters=self._Fe3Fe2_offset_parameters,
         )
 
         return Fe3Fe2 + offset
@@ -782,7 +786,7 @@ class PEC_olivine:
                 # Remove inclusions that returned equilibration errors from future iterations
                 idx_errors = list(map(FeO.index.get_loc, error_samples))
                 FeO_mismatch_new[idx_errors] = False
-                self._model_results.loc[idx_errors, "Kd_equilibration"] = False
+                self._model_results.loc[error_samples, "Kd_equilibration"] = False
 
                 reslice = ~np.array_equal(FeO_mismatch_new, FeO_mismatch)
                 FeO_mismatch = FeO_mismatch_new
