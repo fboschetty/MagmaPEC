@@ -6,6 +6,7 @@ import pandas as pd
 
 # Progress bar for lengthy calculations
 from alive_progress import alive_bar, config_handler
+from MagmaPEC.PEC_model.PEC_functions import calculate_observed_Kd
 from scipy.optimize import root_scalar
 
 config_handler.set_global(
@@ -21,10 +22,9 @@ config_handler.set_global(
 
 from MagmaPandas.configuration import configuration
 from MagmaPandas.Fe_redox import Fe3Fe2_models
-from MagmaPandas.fO2 import fO2_QFM
-from MagmaPandas.Kd.Ol_melt import Kd_models, calculate_FeMg_Kd
+from MagmaPandas.fO2 import calculate_fO2
+from MagmaPandas.Kd.Ol_melt import Kd_models
 from MagmaPandas.MagmaFrames import Melt, Olivine
-
 from MagmaPEC.PEC_configuration import PEC_configuration
 from MagmaPEC.PEC_model.cryst_correction import crystallisation_correction
 from MagmaPEC.PEC_model.Fe_eq import Fe_equilibrate
@@ -53,6 +53,8 @@ class PEC_olivine:
         offsets of calculated melt Fe3+/Fe2+ ratios in standard deviations.
     Kd_offset_parameters : float, array-like
         offsets of calculated olivine-melt Fe-Mg Kd's in standard deviations.
+    temperature_offset_parameters : float, array-like
+        offsets of calculated temperatures in standard deviations.
 
     Attributes
     ----------
@@ -74,12 +76,14 @@ class PEC_olivine:
         olivines: Union[Olivine, pd.Series, float],
         P_bar: Union[float, int, pd.Series],
         FeO_target: Union[float, pd.Series, callable],
-        Fe3Fe2_offset_parameters: float | np.ndarray = 0.0,
-        Kd_offset_parameters: float | np.ndarray = 0.0,
+        Fe3Fe2_offset_parameters: float = 0.0,
+        Kd_offset_parameters: float = 0.0,
+        temperature_offset_parameters: float = 0.0,
         **kwargs,
     ):
         self._Fe3Fe2_offset_parameters = Fe3Fe2_offset_parameters
         self._Kd_offset_parameters = Kd_offset_parameters
+        self._temperature_offset_parameters = temperature_offset_parameters
 
         self._olivine_corrected = pd.DataFrame(
             0.0,
@@ -183,7 +187,11 @@ class PEC_olivine:
                 self.FeO_target = self.FeO_function(self.inclusions)
 
         self._model_results = pd.DataFrame(
-            columns=("isothermal_equilibration", "Kd_equilibration"),
+            {
+                "isothermal_equilibration": False,
+                "Kd_equilibration": False,
+                "FeO_converge": True,
+            },
             index=self.inclusions.index,
             dtype=bool,
         )
@@ -212,7 +220,7 @@ class PEC_olivine:
 
     @property
     def olivine(self):
-        return self._olivine.convert_moles_wtPercent()
+        return self._olivine.wt_pc
 
     @olivine.setter
     def olivine(self, value):
@@ -267,61 +275,105 @@ class PEC_olivine:
 
         Fe3Fe2_model = Fe3Fe2_models[configuration.Fe3Fe2_model]
 
-        melt = kwargs.get("melt", self.inclusions.moles)
-        melt_wtpc = melt.convert_moles_wtPercent()
+        melt = kwargs.get("melt_mol_fractions", self.inclusions.moles)
+        melt_wtpc = melt.wt_pc
 
         pressure = kwargs.get("P_bar", self.P_bar)
-        dQFM = kwargs.get("dQFM", configuration.dQFM)
+        dfO2 = kwargs.get("dfO2", configuration.dfO2)
 
-        T_K = kwargs.get("T_K", melt_wtpc.temperature(pressure))
-        fO2 = kwargs.get("fO2", fO2_QFM(dQFM, T_K, pressure))
+        T_K = kwargs.get(
+            "T_K",
+            melt_wtpc.temperature(
+                pressure, offset=self._temperature_offset_parameters, warn=False
+            ),
+        )
+        fO2 = kwargs.get("fO2", calculate_fO2(T_K=T_K, P_bar=pressure, dfO2=dfO2))
 
         Fe3Fe2 = Fe3Fe2_model.calculate_Fe3Fe2(
-            Melt_mol_fractions=melt, T_K=T_K, fO2=fO2, P_bar=pressure
+            melt_mol_fractions=melt, T_K=T_K, fO2=fO2, P_bar=pressure
         )
+        # if self._Fe3Fe2_offset_parameters != 0.0:
         offset = Fe3Fe2_model.get_offset(
             melt_composition=melt,
             Fe3Fe2=Fe3Fe2,
             offset_parameters=self._Fe3Fe2_offset_parameters,
+            pressure=pressure,
         )
 
-        return Fe3Fe2 + offset
+        Fe3Fe2 = Fe3Fe2 + offset
+        try:
+            Fe3Fe2[Fe3Fe2 <= 0.0] = 1e-6
+        except TypeError:
+            Fe3Fe2 = 1e-6 if Fe3Fe2 <= 0 else Fe3Fe2
+
+        try:
+            if len(Fe3Fe2) == 1:
+                return np.array(Fe3Fe2)[0]
+            return Fe3Fe2
+
+        except TypeError:
+            return Fe3Fe2
+
+    @staticmethod
+    def calculate_Fe2FeTotal(Fe3Fe2, **kwargs):
+
+        return 1 / (1 + Fe3Fe2)
 
     def calculate_Kds(self, **kwargs) -> Tuple[pd.Series, pd.Series]:
         """
         Model equilibrium Kds and calculate measured Kds
         """
         Kd_model = Kd_models[configuration.Kd_model]
-        calculate_Kd = calculate_FeMg_Kd
 
-        dQFM = kwargs.get("dQFM", configuration.dQFM)
+        dfO2 = kwargs.get("dfO2", configuration.dfO2)
 
         melt = kwargs.get("melt", self.inclusions.moles)
         pressure = kwargs.get("P_bar", self.P_bar)
         forsterite = kwargs.get("forsterite", self._olivine.forsterite)
 
-        T_K = kwargs.get("T_K", melt.convert_moles_wtPercent().temperature(pressure))
-        fO2 = kwargs.get("fO2", fO2_QFM(dQFM, T_K, pressure))
+        T_K = kwargs.get(
+            "T_K",
+            melt.temperature(
+                pressure, offset=self._temperature_offset_parameters, warn=False
+            ),
+        )
+        fO2 = kwargs.get("fO2", calculate_fO2(T_K=T_K, P_bar=pressure, dfO2=dfO2))
 
         Fe3Fe2 = self.calculate_Fe3Fe2(
-            melt=melt, P_bar=pressure, dQFM=dQFM, fO2=fO2, T_K=T_K
+            melt_mol_fractions=melt, P_bar=pressure, dfO2=dfO2, fO2=fO2, T_K=T_K
         )
 
-        Fe2_FeTotal = 1 / (1 + Fe3Fe2)
-        melt_MgFe = melt["MgO"] / (melt["FeO"] * Fe2_FeTotal)
-        olivine_MgFe = forsterite / (1 - forsterite)
-        Kd_observed = melt_MgFe / olivine_MgFe
+        Kd_observed = calculate_observed_Kd(
+            melt_mol_fractions=melt, Fe3Fe2=Fe3Fe2, forsterite=forsterite
+        )
+        # Fe2_FeTotal = 1 / (1 + Fe3Fe2)
+        # melt_MgFe = melt["MgO"] / (melt["FeO"] * Fe2_FeTotal)
+        # olivine_MgFe = forsterite / (1 - forsterite)
+        # Kd_observed = melt_MgFe / olivine_MgFe
 
         if isinstance(Kd_observed, pd.Series):
             Kd_observed.rename("real", inplace=True)
             Kd_observed.index.name = "name"
 
-        Kd_equilibrium = calculate_Kd(melt, forsterite, T_K, Fe3Fe2, P_bar=pressure)
-        offset = Kd_model.get_offset(
-            melt_composition=melt.convert_moles_wtPercent(),
-            offset_parameters=self._Kd_offset_parameters,
+        Kd_equilibrium = Kd_model.calculate_Kd(
+            melt_mol_fractions=melt,
+            T_K=T_K,
+            P_bar=pressure,
+            Fe3Fe2=Fe3Fe2,
+            forsterite_intial=forsterite,
         )
-        Kd_equilibrium = Kd_equilibrium + offset
+
+        if self._Kd_offset_parameters != 0.0:
+            offset = Kd_model.get_offset(
+                melt_composition=melt,
+                offset_parameters=self._Kd_offset_parameters,
+            )
+            Kd_equilibrium = Kd_equilibrium + offset
+
+        try:
+            Kd_equilibrium[Kd_equilibrium <= 0.0] = 1e-6
+        except TypeError:
+            Kd_equilibrium = 1e-6 if Kd_equilibrium <= 0.0 else Kd_equilibrium
 
         # if isinstance(Kd_equilibrium, (float, int)):
         #     Kd_equilibrium = pd.Series(Kd_equilibrium, index=melt.index)
@@ -340,8 +392,9 @@ class PEC_olivine:
 
         name, inclusion, olivine, temperature, pressure = sample
 
-        inclusion_wtPercent = inclusion.convert_moles_wtPercent()
-        temperature_new = inclusion_wtPercent.temperature(pressure)
+        temperature_new = inclusion.temperature(
+            pressure, offset=self._temperature_offset_parameters, warn=False
+        )
 
         sign = np.sign(temperature - temperature_new)
 
@@ -359,12 +412,15 @@ class PEC_olivine:
 
         return name, olivine_amount
 
-    @staticmethod
-    def _root_temperature(olivine_amount, melt_x_moles, olivine_x_moles, T_K, P_bar):
+    def _root_temperature(
+        self, olivine_amount, melt_x_moles, olivine_x_moles, T_K, P_bar
+    ):
 
         melt_x_new = melt_x_moles + olivine_x_moles.mul(olivine_amount)
         melt_x_new = melt_x_new.normalise()
-        temperature_new = melt_x_new.convert_moles_wtPercent().temperature(P_bar=P_bar)
+        temperature_new = melt_x_new.temperature(
+            P_bar=P_bar, offset=self._temperature_offset_parameters, warn=False
+        )
 
         return T_K - temperature_new
 
@@ -392,22 +448,28 @@ class PEC_olivine:
         stepsize = pd.Series(stepsize, index=self.inclusions.index, name="stepsize")
         decrease_factor = getattr(PEC_configuration, "decrease_factor")
         Kd_converge = getattr(PEC_configuration, "Kd_converge")
-        dQFM = configuration.dQFM
+        dfO2 = configuration.dfO2
         P_bar = self.P_bar
 
         # Calculate temperature and fO2
-        temperatures = self.inclusions.temperature(P_bar=P_bar)
-        fO2 = fO2_QFM(dQFM, temperatures, P_bar)
+        temperatures = self.inclusions.temperature(
+            P_bar=P_bar, offset=self._temperature_offset_parameters, warn=False
+        )
+        fO2 = calculate_fO2(T_K=temperatures, P_bar=P_bar, dfO2=dfO2)
         # Get olivine forsterite contents
         forsterite_host = self._olivine.forsterite
 
-        def calculate_Fe2FeTotal(mol_fractions, T_K, P_bar, oxygen_fugacity):
+        # def calculate_Fe2FeTotal(mol_fractions, T_K, P_bar, fO2, **kwargs):
 
-            Fe3Fe2 = self.calculate_Fe3Fe2(
-                melt=mol_fractions, T_K=T_K, P_bar=P_bar, fO2=oxygen_fugacity
-            )
+        #     Fe3Fe2 = self.calculate_Fe3Fe2(
+        #         melt_mol_fractions=mol_fractions,
+        #         T_K=T_K,
+        #         P_bar=P_bar,
+        #         fO2=fO2,
+        #         **kwargs,
+        #     )
 
-            return 1 / (1 + Fe3Fe2)
+        #     return 1 / (1 + Fe3Fe2)
 
         # Set up initial data
         mi_moles = self.inclusions.moles
@@ -422,7 +484,13 @@ class PEC_olivine:
         FeMg_exchange = pd.DataFrame(0, index=mi_moles.index, columns=mi_moles.columns)
         FeMg_exchange.loc[:, ["FeO", "MgO"]] = [1, -1]
         # Find disequilibrium inclusions
-        disequilibrium = ~np.isclose(Kd_equilibrium, Kd_real, atol=Kd_converge, rtol=0)
+        disequilibrium = pd.Series(
+            ~np.isclose(Kd_equilibrium, Kd_real, atol=Kd_converge, rtol=0),
+            index=Kd_real.index,
+        )
+        self._model_results.loc[
+            disequilibrium.index, ["isothermal_equilibration", "Kd_equilibration"]
+        ] = ~disequilibrium
         # Set stepsizes acoording to Kd disequilibrium
         stepsize.loc[Kd_real < Kd_equilibrium] = -stepsize.loc[
             Kd_real < Kd_equilibrium
@@ -447,18 +515,19 @@ class PEC_olivine:
 
                 if reslice:
                     # Only reslice al the dataframes and series if the amount of disequilibrium inclusions has changed
-                    stepsize_loop = stepsize.loc[disequilibrium]
-                    temperatures_loop = temperatures.loc[disequilibrium]
-                    P_loop = P_bar.loc[disequilibrium]
-                    FeMg_loop = FeMg_exchange.loc[disequilibrium, :]
-                    mi_moles_loop = mi_moles.loc[disequilibrium, :].copy()
-                    fO2_loop = fO2.loc[disequilibrium]
-                    Fo_host_loop = forsterite_host.loc[disequilibrium]
-                    Kd_eq_loop = Kd_equilibrium.loc[disequilibrium].copy()
-                    Kd_real_loop = Kd_real.loc[disequilibrium].copy()
+                    samples = disequilibrium.index[disequilibrium]
+                    stepsize_loop = stepsize.loc[samples]
+                    temperatures_loop = temperatures.loc[samples]
+                    P_loop = P_bar.loc[samples]
+                    FeMg_loop = FeMg_exchange.loc[samples, :]
+                    mi_moles_loop = mi_moles.loc[samples, :].copy()
+                    fO2_loop = fO2.loc[samples]
+                    Fo_host_loop = forsterite_host.loc[samples]
+                    Kd_eq_loop = Kd_equilibrium.loc[samples].copy()
+                    Kd_real_loop = Kd_real.loc[samples].copy()
 
                 # Exchange Fe and Mg
-                mi_moles_loop = mi_moles_loop + FeMg_loop.mul(stepsize_loop, axis=0)
+                mi_moles_loop = mi_moles_loop.add(FeMg_loop.mul(stepsize_loop, axis=0))
                 # Calculate new equilibrium Kd and Fe speciation
                 Kd_eq_loop, _ = self.calculate_Kds(
                     melt=mi_moles_loop.normalise(),
@@ -467,9 +536,13 @@ class PEC_olivine:
                     P_bar=P_loop,
                     forsterite=Fo_host_loop,
                 )
-                Fe2_FeTotal = calculate_Fe2FeTotal(
-                    mi_moles_loop.normalise(), temperatures_loop, P_loop, fO2_loop
+                Fe3Fe2_loop = self.calculate_Fe3Fe2(
+                    melt_mol_fractions=mi_moles_loop.normalise(),
+                    T_K=temperatures_loop,
+                    P_bar=P_loop,
+                    fO2=fO2_loop,
                 )
+                Fe2_FeTotal = self.calculate_Fe2FeTotal(Fe3Fe2=Fe3Fe2_loop)
                 melt_FeMg = (mi_moles_loop["FeO"] * Fe2_FeTotal) / mi_moles_loop["MgO"]
                 # equilibrium olivine composition in oxide mol fractions
                 Fo_equilibrium = 1 / (1 + Kd_eq_loop * melt_FeMg)
@@ -484,18 +557,21 @@ class PEC_olivine:
                     units="mol fraction",
                     datatype="oxide",
                 )
-                olivine = olivine.fillna(0.0).normalise()
+                olivine = olivine.fillna(1e-6).normalise()
+
+                # list of samples that did not equilibrate
+                error_samples = []
 
                 # Single core
                 for sample in mi_moles_loop.index:
 
-                    error_samples = []
-
-                    sample_wtPercent = mi_moles_loop.loc[
-                        sample
-                    ].convert_moles_wtPercent()
-                    temperature_new = sample_wtPercent.temperature(
-                        P_bar=P_loop.loc[sample]
+                    # sample_wtPercent = mi_moles_loop.loc[
+                    #     sample
+                    # ].convert_moles_wtPercent()
+                    temperature_new = mi_moles_loop.loc[sample].temperature(
+                        P_bar=P_loop.loc[sample],
+                        offset=self._temperature_offset_parameters,
+                        warn=False,
                     )
                     # sign = np.sign(temperatures_loop.loc[sample] - temperature_new)
 
@@ -519,12 +595,11 @@ class PEC_olivine:
                             # x1=sign * 0.01,
                             bracket=[min_val, 10],
                         ).root
-                        self._model_results.loc[sample, "isothermal_equilibration"] = (
-                            True
-                        )
+                        self._model_results.loc[
+                            sample, ["isothermal_equilibration", "Kd_equilibration"]
+                        ] = True
                     except ValueError:
                         # Catch inclusions that cannot reach isothermal equilibrium.
-                        w.warn(f"{sample}: isothermal equilibration not reached")
                         self._olivine_corrected.loc[
                             sample, "equilibration_crystallisation"
                         ] = np.nan
@@ -554,8 +629,9 @@ class PEC_olivine:
                     forsterite=Fo_host_loop,
                 )
                 # Find inclusions outside the equilibrium forsterite range
-                disequilibrium_loop = ~np.isclose(
-                    Kd_eq_loop, Kd_real_loop, atol=Kd_converge, rtol=0
+                disequilibrium_loop = pd.Series(
+                    ~np.isclose(Kd_eq_loop, Kd_real_loop, atol=Kd_converge, rtol=0),
+                    index=Kd_eq_loop.index,
                 )
                 # Find overcorrected inclusions
                 overstepped = ~np.equal(
@@ -564,32 +640,41 @@ class PEC_olivine:
                 # Reverse one iteration and decrease stepsize for overcorrected inclusions
                 decrease_stepsize = np.logical_and(overstepped, disequilibrium_loop)
                 if sum(decrease_stepsize) > 0:
-                    idx_FeMg = mi_moles_loop.index[decrease_stepsize]
-                    mi_moles_loop.drop(labels=idx_FeMg, axis=0, inplace=True)
-                    Kd_eq_loop.drop(labels=idx_FeMg, axis=0, inplace=True)
-                    Kd_real_loop.drop(labels=idx_FeMg, axis=0, inplace=True)
+                    idx_sz = mi_moles_loop.index[decrease_stepsize]
+                    mi_moles_loop.drop(labels=idx_sz, axis=0, inplace=True)
+                    Kd_eq_loop.drop(labels=idx_sz, axis=0, inplace=True)
+                    Kd_real_loop.drop(labels=idx_sz, axis=0, inplace=True)
                     self._olivine_corrected.loc[
-                        idx_FeMg, "equilibration_crystallisation"
-                    ] -= olivine_corrected_loop.loc[idx_FeMg]
-                    stepsize.loc[idx_FeMg] = stepsize_loop.loc[idx_FeMg].div(
+                        idx_sz, "equilibration_crystallisation"
+                    ] -= olivine_corrected_loop.loc[idx_sz]
+                    stepsize.loc[idx_sz] = stepsize_loop.loc[idx_sz].div(
                         decrease_factor
                     )
 
-                mi_moles.loc[mi_moles_loop.index, :] = mi_moles_loop.copy()
+                mi_moles.loc[mi_moles_loop.index, :] = mi_moles_loop.values
+
                 Kd_equilibrium[Kd_eq_loop.index] = Kd_eq_loop.copy()
                 Kd_real[Kd_real_loop.index] = Kd_real_loop.copy()
-                disequilibrium_new = ~np.isclose(
-                    Kd_equilibrium, Kd_real, atol=Kd_converge, rtol=0
+
+                disequilibrium_loop = pd.Series(
+                    ~np.isclose(Kd_eq_loop, Kd_real_loop, atol=Kd_converge, rtol=0),
+                    index=Kd_eq_loop.index,
                 )
 
                 # Remove inclusions that returned equilibration errors from future iterations
-                idx_errors = list(map(Kd_real.index.get_loc, error_samples))
-                disequilibrium_new[idx_errors] = False
+                disequilibrium.loc[error_samples] = False
 
-                reslice = ~np.array_equal(disequilibrium_new, disequilibrium)
-                disequilibrium = disequilibrium_new
+                reslice = not disequilibrium.loc[samples].equals(disequilibrium_loop)
+                # reslice = (
+                #     sum(~disequilibrium_loop) > 0
+                # )  # ~np.array_equal(disequilibrium_new, disequilibrium)
+                disequilibrium.loc[disequilibrium_loop.index] = (
+                    disequilibrium_loop.values
+                )
+
                 # Make sure that disequilibrium stays list-like
                 # so that any sliced dataframe remains a dataframe
+                # TODO these lines can probably be removed
                 try:
                     len(disequilibrium)
                 except TypeError:
@@ -597,7 +682,7 @@ class PEC_olivine:
 
                 bar(sum(~disequilibrium) / total_inclusions)
 
-        corrected_compositions = mi_moles.convert_moles_wtPercent()
+        corrected_compositions = mi_moles.wt_pc
 
         # Set compositions of inclusions with equilibration errors to NaNs.
         idx_errors = self._olivine_corrected.index[
@@ -607,6 +692,9 @@ class PEC_olivine:
 
         # temperatures_new = corrected_compositions.temperature(P_bar=P_bar)
         self.inclusions = corrected_compositions
+
+        if (n := (~self._model_results["isothermal_equilibration"]).sum()) > 0:
+            w.warn(f"isothermal equilibration not reached for {n} inclusions")
 
         if not inplace:
             return (
@@ -629,7 +717,7 @@ class PEC_olivine:
         """
 
         if not self._model_results["isothermal_equilibration"].any():
-            raise RuntimeError("None of the inclusions are equilibrated!")
+            raise RuntimeError("None of the inclusions are equilibrated")
 
         # remove samples that did not reach isothermal equilibration.
         remove_errors = self._model_results["isothermal_equilibration"]
@@ -645,7 +733,7 @@ class PEC_olivine:
         FeO_converge = kwargs.get(
             "FeO_converge", getattr(PEC_configuration, "FeO_converge")
         )
-        dQFM = getattr(configuration, "dQFM")
+        dfO2 = getattr(configuration, "dfO2")
         P_bar = self.P_bar.loc[remove_errors]
         # Inclusion compositions in oxide mol fractions
         mi_moles = self.inclusions.loc[remove_errors].moles
@@ -672,39 +760,50 @@ class PEC_olivine:
         else:
             FeO_target = self.FeO_target.loc[remove_errors].copy()
 
-        temperature_old = self.inclusions.loc[remove_errors].temperature(P_bar=P_bar)
+        temperature_old = self.inclusions.loc[remove_errors].temperature(
+            P_bar=P_bar, offset=self._temperature_offset_parameters, warn=False
+        )
 
         stepsize.loc[FeO > FeO_target] = -stepsize.loc[FeO > FeO_target]
-        FeO_mismatch = ~np.isclose(FeO, FeO_target, atol=FeO_converge, rtol=0)
+        FeO_mismatch = pd.Series(
+            ~np.isclose(FeO, FeO_target, atol=FeO_converge, rtol=0), index=FeO.index
+        )
+        # self._model_results.loc[FeO_mismatch.index, "FeO_converge"] = ~FeO_mismatch
 
         ##### OLIVINE MELTING/CRYSTALLISATION LOOP #####
         reslice = True
         total_inclusions = mi_moles.shape[0]
+        # list of samples with Kd equilibration or FeO convergence errors
+        remove_samples = []
+        FeO_converge_error = []
         with alive_bar(
             title=f"{'Correcting':<13} ...",
             total=total_inclusions,
         ) as bar:
 
             while sum(FeO_mismatch) > 0:
+
                 bar(sum(~FeO_mismatch) / total_inclusions)
 
                 if reslice:
-                    stepsize_loop = stepsize.loc[FeO_mismatch]
-                    mi_moles_loop = mi_moles.loc[FeO_mismatch, :].copy()
-                    idx_olivine = mi_moles_loop.index
-                    olivine_loop = self._olivine.loc[FeO_mismatch, :]
+                    samples = FeO_mismatch.index[FeO_mismatch]
+                    stepsize_loop = stepsize.loc[samples]
+                    mi_moles_loop = mi_moles.loc[samples, :].copy()
+                    # idx_olivine = mi_moles_loop.index
+                    olivine_loop = self._olivine.loc[samples, :]
 
                 mi_moles_loop = mi_moles_loop + olivine_loop.mul(stepsize_loop, axis=0)
 
                 # mi_moles_loop = mi_moles_loop.normalise()
                 self._olivine_corrected.loc[
-                    idx_olivine, "PE_crystallisation"
+                    samples, "PE_crystallisation"
                 ] += stepsize_loop
                 #################################################
                 ##### Exchange Fe-Mg to keep Kd equilibrium #####
-                for sample in mi_moles_loop.index:
+                # list of samples that did not equilibrate
+                Kd_equilibration_error = []
 
-                    error_samples = []
+                for sample in mi_moles_loop.index:
 
                     max_val = (
                         mi_moles_loop.loc[sample, "MgO"] - 1e-3
@@ -718,17 +817,15 @@ class PEC_olivine:
                                 FeMg_vector,
                                 forsterite.loc[sample],
                                 P_bar.loc[sample],
-                                {"dQFM": dQFM},
+                                {"dfO2": dfO2},
                             ),
                             # x0=0,
                             # x1=max_val / 10,
                             bracket=[min_val, max_val],
                         ).root
-                        self._model_results.loc[sample, "Kd_equilibration"] = True
                     except ValueError:
                         # Catch inclusions that cannot reach Kd equilibrium
-                        w.warn(f"{sample}: Kd equilibration not reached")
-                        error_samples.append(sample)
+                        Kd_equilibration_error.append(sample)
                         self._olivine_corrected.loc[sample, "PE_crystallisation"] = (
                             np.nan
                         )
@@ -742,13 +839,13 @@ class PEC_olivine:
                 # mi_moles_loop = mi_moles_loop.normalise()
                 #################################################
                 # Recalculate FeO
-                mi_wtPercent = mi_moles_loop.convert_moles_wtPercent()
-                FeO = mi_wtPercent["FeO"]
+                mi_wtpc_loop = mi_moles_loop.wt_pc
+                FeO = mi_wtpc_loop["FeO"]
                 if self._FeO_as_function:
-                    FeO_target_loop = self.FeO_function(mi_wtPercent)
-                    self.FeO_target.loc[FeO_mismatch] = FeO_target_loop
+                    FeO_target_loop = self.FeO_function(mi_wtpc_loop)
+                    self.FeO_target.loc[mi_wtpc_loop.index] = FeO_target_loop
                 else:
-                    FeO_target_loop = self.FeO_target.loc[FeO_mismatch]
+                    FeO_target_loop = self.FeO_target.loc[mi_wtpc_loop.index]
                 # Find FeO mismatched and overcorrected inclusions
                 FeO_mismatch_loop = ~np.isclose(
                     FeO, FeO_target_loop, atol=FeO_converge, rtol=0
@@ -770,29 +867,58 @@ class PEC_olivine:
                     stepsize.loc[reverse_FeO] = stepsize.loc[reverse_FeO].div(
                         decrease_factor
                     )
-                # Copy loop data to the main variables
-                mi_moles.loc[mi_moles_loop.index, :] = mi_moles_loop.copy()
-                mi_wtPercent = mi_moles.convert_moles_wtPercent()
-                FeO = mi_wtPercent["FeO"]
+
+                    #################################################
+                    # TODO 2024.05.16 CHECK IF THIS CONTINGENCY WORKS
+                    #################################################
+
+                    # Stop iterating if stepsize falls below 1e-6
+                    FeO_converge_error = list(stepsize.index[abs(stepsize) < 1e-6])
+                    # self._olivine_corrected.loc[terminate, "PE_crystallisation"] = 0
+                    # mi_moles.loc[terminate] = self.inclusions.moles.loc[
+                    #     terminate
+                    # ].values
+                    self._model_results.loc[FeO_converge_error, "FeO_converge"] = False
+
+                # determine FeO convergence
+                mi_wtpc_loop = mi_moles_loop.wt_pc
+                FeO = mi_wtpc_loop["FeO"]
                 if self._FeO_as_function:
-                    FeO_target = self.FeO_function(mi_wtPercent)
-                    self.FeO_target = FeO_target
+                    FeO_target = self.FeO_function(mi_wtpc_loop)
+                    self.FeO_target.loc[FeO_target.index] = FeO_target
                 else:
                     FeO_target = self.FeO_target
-                FeO_mismatch_new = ~np.isclose(
-                    FeO, FeO_target, atol=FeO_converge, rtol=0
+                FeO_mismatch_loop = pd.Series(
+                    ~np.isclose(FeO, FeO_target, atol=FeO_converge, rtol=0),
+                    index=FeO.index,
                 )
 
-                # Remove inclusions that returned equilibration errors from future iterations
-                idx_errors = list(map(FeO.index.get_loc, error_samples))
-                FeO_mismatch_new[idx_errors] = False
-                self._model_results.loc[error_samples, "Kd_equilibration"] = False
+                # Copy loop data to the main variables
+                mi_moles.loc[mi_moles_loop.index, :] = mi_moles_loop.copy()
+                # mi_wtPercent = mi_moles.wt_pc
 
-                reslice = ~np.array_equal(FeO_mismatch_new, FeO_mismatch)
-                FeO_mismatch = FeO_mismatch_new
+                # Remove inclusions that returned equilibration or FeO convergence errors from future iterations
+                remove_samples = (
+                    remove_samples + Kd_equilibration_error + FeO_converge_error
+                )
+
+                FeO_mismatch[remove_samples] = False
+                self._model_results.loc[Kd_equilibration_error, "Kd_equilibration"] = (
+                    False
+                )
+
+                reslice = (
+                    sum(~FeO_mismatch_loop) > 1
+                )  # ~np.array_equal(FeO_mismatch_new, FeO_mismatch)
+
+                reslice = not FeO_mismatch.loc[samples].equals(FeO_mismatch_loop)
+
+                FeO_mismatch.loc[FeO_mismatch_loop.index] = FeO_mismatch_loop.values
                 bar(sum(~FeO_mismatch) / total_inclusions)
 
-        corrected_compositions = mi_moles.convert_moles_wtPercent()
+        corrected_compositions = mi_moles.wt_pc
+
+        self._model_results.loc[FeO_mismatch.index, "FeO_converge"] = ~FeO_mismatch
 
         self._olivine_corrected["total_crystallisation"] = self._olivine_corrected[
             ["equilibration_crystallisation", "PE_crystallisation"]
@@ -807,12 +933,21 @@ class PEC_olivine:
         ]
         self.inclusions.loc[idx_errors] = np.nan
 
-        if not inplace:
-            return (
-                corrected_compositions.copy(),
-                self._olivine_corrected.mul(100),
-                corrected_compositions.temperature(P_bar),
-            )
+        if (n := (~self._model_results["Kd_equilibration"]).sum()) > 0:
+            w.warn(f"Kd equilibration not reached for {n} inclusions")
+        if (n := (~self._model_results["FeO_converge"]).sum()) > 0:
+            w.warn(f"FeO not converged for {n} inclusions")
+
+        if inplace:
+            return
+
+        return (
+            corrected_compositions.copy(),
+            self._olivine_corrected.mul(100),
+            corrected_compositions.temperature(
+                P_bar, offset=self._temperature_offset_parameters, warn=False
+            ),
+        )
 
     def correct(self, **kwargs) -> Tuple[Melt, pd.DataFrame, pd.Series]:
         """

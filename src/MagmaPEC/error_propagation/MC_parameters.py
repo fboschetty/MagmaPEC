@@ -48,6 +48,7 @@ class PEC_MC_parameters:
         FeOi_errors: float | FeOi_prediction = 0.0,
         Fe3Fe2: bool = False,
         Kd: bool = False,
+        temperature: bool = False,
     ):
         for val, name in zip((melt_errors, olivine_errors), ("melt", "olivine")):
             if (val is not None) & (
@@ -61,6 +62,7 @@ class PEC_MC_parameters:
         self.FeOi_errors = FeOi_errors
         self.Fe3Fe2 = Fe3Fe2
         self.Kd = Kd
+        self.temperature = temperature
 
     def get_parameters(self, n: int):
         """
@@ -104,17 +106,22 @@ class PEC_MC_parameters:
         elif isinstance(self.FeOi_errors, FeOi_prediction):
             self.parameters["FeOi"] = self.FeOi_errors.random_sample_coefficients(n=n)
 
-        # Fe3Fe2
-        if self.Fe3Fe2:
-            self.parameters["Fe3Fe2"] = Fe3Fe2_model.get_offset_parameters(n=n)
-        else:
-            self.parameters["Fe3Fe2"] = np.repeat(0.0, n)
+        for param in ["Fe3Fe2", "Kd", "temperature"]:
+            if getattr(self, param):
+                self.parameters[param] = np.random.normal(loc=0, scale=1, size=n)
+            else:
+                self.parameters[param] = np.repeat(0.0, n)
+        # # Fe3Fe2
+        # if self.Fe3Fe2:
+        #     self.parameters["Fe3Fe2"] = Fe3Fe2_model.get_offset_parameters(n=n)
+        # else:
+        #     self.parameters["Fe3Fe2"] = np.repeat(0.0, n)
 
-        # Kd
-        if self.Kd:
-            self.parameters["Kd"] = Kd_model.get_offset_parameters(n=n)
-        else:
-            self.parameters["Kd"] = np.repeat(0.0, n)
+        # # Kd
+        # if self.Kd:
+        #     self.parameters["Kd"] = Kd_model.get_offset_parameters(n=n)
+        # else:
+        #     self.parameters["Kd"] = np.repeat(0.0, n)
 
     def _get_iterators(self):
         return [

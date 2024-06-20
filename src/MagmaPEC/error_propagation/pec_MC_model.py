@@ -81,7 +81,7 @@ class PEC_MC:
 
         self.parameters.get_parameters(n=n)
 
-        for i, (*params, Fe3Fe2_err, Kd_err) in enumerate(
+        for i, (*params, Fe3Fe2_err, Kd_err, temperature_err) in enumerate(
             zip(*self.parameters._get_iterators())
         ):
             clear_output()
@@ -96,6 +96,7 @@ class PEC_MC:
                 FeO_target=FeOi,
                 Fe3Fe2_offset_parameters=Fe3Fe2_err,
                 Kd_offset_parameters=Kd_err,
+                temperature_offset_parameters=temperature_err,
             )
 
             melts_corr, pec, T_K = pec_model.correct()
@@ -116,7 +117,14 @@ class PEC_MC:
 
         if isinstance(FeOi_err, (float, int)):
             # for a fixed FeO error
-            FeOi = self.FeO_target + FeOi_err
+            if isinstance(self.FeO_target, (float, int)):
+                FeOi = self.FeO_target + FeOi_err
+            elif isinstance(self.FeO_target, FeOi_prediction):
+                self.FeO_target._intercept += FeOi_err
+                FeOi = partial(
+                    self.FeO_target._FeO_initial_func,
+                    coefficients=self.FeO_target.coefficients,
+                )
         elif isinstance(FeOi_err, tuple):
             # for errors on linear regression coefficients
             if "intercept" in FeOi_err[1].index:
@@ -135,9 +143,9 @@ class PEC_MC:
         self.pec.columns = ("pec", "stddev")
 
         self.inclusions_corr = pd.DataFrame(
-            index=self.inclusions.index, columns=self.inclusions.columns
+            index=self.inclusions.index, columns=self.inclusions.elements
         )
-        colnames = [f"{n}_stddev" for n in self.inclusions.columns]
+        colnames = [f"{n}_stddev" for n in self.inclusions.elements]
         self.inclusions_stddev = pd.DataFrame(
             index=self.inclusions.index, columns=colnames
         )
