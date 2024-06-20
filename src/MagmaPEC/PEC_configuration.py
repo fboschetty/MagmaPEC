@@ -17,7 +17,7 @@ class _meta_PEC_configuration(type):
         cls._decrease_factor = 5
         # Convergence values
         cls.FeO_converge = 0.05
-        cls.Kd_converge = 1e-3
+        cls.Kd_converge = 5e-3
 
     @property
     def Fe2_behaviour(cls):
@@ -119,4 +119,4 @@ class PEC_configuration(metaclass=_meta_PEC_configuration):
         cls._stepsize_crystallisation = 0.05
         cls._decrease_factor = 5
         cls.FeO_converge = 0.05
-        cls.Kd_converge = 1e-3
+        cls.Kd_converge = 5e-3
