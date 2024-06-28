@@ -70,6 +70,7 @@ def _calculate_Kds(melt_mol_fractions, forsterite, P_bar):
         T_K=T_K,
         fO2=fO2,
         offset_parameters=0.0,
+        P_bar=P_bar,
     )
     Kd_equilibrium, Kd_observed = calculate_Kds(
         melt_mol_fractions=melt_mol_fractions,
