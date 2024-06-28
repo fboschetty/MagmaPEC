@@ -5,10 +5,10 @@ import pandas as pd
 from MagmaPandas.MagmaFrames import Melt, Olivine
 
 from MagmaPEC.PEC_configuration import PEC_configuration
-from MagmaPEC.PEC_model.scalar.crystallisation_correction_scalar import (
-    crystallisation_correction,
+from MagmaPEC.PEC_model.scalar import (
+    crystallisation_correction_scalar,
+    equilibration_scalar,
 )
-from MagmaPEC.PEC_model.scalar.equilibration_scalar import equilibration_scalar
 from MagmaPEC.PEC_model.vector import crystallisation_correction, equilibration
 from MagmaPEC.tools import FeO_Target
 
@@ -303,16 +303,16 @@ class PEC:
 
         inclusion = self.inclusions_uncorrected.loc[index].copy().squeeze()
         olivine = self._olivine.loc[index].copy().squeeze()
-        FeO_target = self.FeO_target.loc[index].squeeze()
+        FeO_target = self.FeO_target.target(melt_wtpc=inclusion)
         P_bar = self.P_bar.loc[index].squeeze()
 
-        if self._FeO_as_function:
-            FeO_target = self.FeO_function
+        if self.FeO_target._as_function:
+            FeO_target = self.FeO_target.function
 
         equilibrated, olivine_equilibrated, *_ = equilibration_scalar(
             inclusion, olivine, P_bar, **kwargs
         )
-        corrected, olivine_corrected, *_ = crystallisation_correction(
+        corrected, olivine_corrected, *_ = crystallisation_correction_scalar(
             equilibrated.iloc[-1].copy(),
             olivine,
             FeO_target,
@@ -403,7 +403,7 @@ class PEC:
             middle = sum(ax.get_xlim()) / 2
 
             if self._FeO_as_function:
-                FeO_inital = self.FeO_function(corrected)
+                FeO_inital = self.FeO_target.target(melt_wtpc=corrected)
                 ax.plot(
                     corrected["MgO"],
                     FeO_inital,

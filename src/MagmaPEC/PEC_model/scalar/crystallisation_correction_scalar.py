@@ -14,7 +14,7 @@ from MagmaPEC.Kd_calculation import _calculate_Kds
 from ...PEC_configuration import PEC_configuration
 
 
-def crystallisation_correction(
+def crystallisation_correction_scalar(
     inclusion: Melt,
     olivine_host: Union[float, MagmaSeries],
     FeO_target: Union[int, float, callable],
@@ -117,6 +117,7 @@ def crystallisation_correction(
                 P_bar,
                 0.0,
                 0.0,
+                {},
             ),
             x0=0,
             x1=0.05,
