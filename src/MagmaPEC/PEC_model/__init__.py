@@ -1,3 +1,3 @@
-from .cryst_correction import *
-from .Fe_eq import *
-from .PEC_vectorised import *
+from .PEC_model import *
+from .scalar.crystallisation_correction_scalar import *
+from .scalar.equilibration_scalar import *

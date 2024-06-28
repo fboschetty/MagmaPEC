@@ -6,7 +6,6 @@ import pandas as pd
 
 # Progress bar for lengthy calculations
 from alive_progress import alive_bar, config_handler
-from MagmaPEC.PEC_model.PEC_functions import calculate_observed_Kd
 from scipy.optimize import root_scalar
 
 config_handler.set_global(
@@ -25,9 +24,13 @@ from MagmaPandas.Fe_redox import Fe3Fe2_models
 from MagmaPandas.fO2 import calculate_fO2
 from MagmaPandas.Kd.Ol_melt import Kd_models
 from MagmaPandas.MagmaFrames import Melt, Olivine
+
+from MagmaPEC.Kd_calculation import calculate_observed_Kd
 from MagmaPEC.PEC_configuration import PEC_configuration
-from MagmaPEC.PEC_model.cryst_correction import crystallisation_correction
-from MagmaPEC.PEC_model.Fe_eq import Fe_equilibrate
+from MagmaPEC.PEC_model.scalar.crystallisation_correction_scalar import (
+    crystallisation_correction,
+)
+from MagmaPEC.PEC_model.scalar.equilibration_scalar import equilibration_scalar
 
 # from .PEC_functions import _root_Kd, _root_temperature
 
@@ -978,7 +981,7 @@ class PEC_olivine:
         if self._FeO_as_function:
             FeO_target = self.FeO_function
 
-        equilibrated, olivine_equilibrated, *_ = Fe_equilibrate(
+        equilibrated, olivine_equilibrated, *_ = equilibration_scalar(
             inclusion, olivine, P_bar, **kwargs
         )
         corrected, olivine_corrected, *_ = crystallisation_correction(

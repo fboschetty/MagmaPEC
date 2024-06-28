@@ -7,7 +7,7 @@ from MagmaPandas.MagmaFrames import Melt, Olivine
 
 from MagmaPEC.error_propagation.FeOi_error_propagation import FeOi_prediction
 from MagmaPEC.error_propagation.MC_parameters import PEC_MC_parameters
-from MagmaPEC.PEC_model import PEC_olivine
+from MagmaPEC.PEC_model import PEC
 
 
 class PEC_MC:
@@ -89,7 +89,7 @@ class PEC_MC:
 
             melt_MC, olivine_MC, FeOi = self._process_MC_params(*params)
 
-            pec_model = PEC_olivine(
+            self.model = PEC(
                 inclusions=melt_MC,
                 olivines=olivine_MC,
                 P_bar=self.P_bar,
@@ -99,7 +99,7 @@ class PEC_MC:
                 temperature_offset_parameters=temperature_err,
             )
 
-            melts_corr, pec, T_K = pec_model.correct()
+            melts_corr, pec, T_K = self.model.correct()
             for name, row in melts_corr.iterrows():
                 self.inclusions_MC[name].loc[i] = row
                 self.pec_MC.loc[i, name] = pec.loc[name, "total_crystallisation"]
