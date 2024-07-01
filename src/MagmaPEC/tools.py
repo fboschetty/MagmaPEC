@@ -39,18 +39,7 @@ class FeO_Target:
         self.function = None
 
         try:
-            if len(FeO_target) != len(samples):
-                raise ValueError(
-                    "Number of initial FeO inputs and inclusions does not match"
-                )
-            if hasattr(FeO_target, "index"):
-                if not FeO_target.index.equals(samples):
-                    raise ValueError(
-                        "FeO target inputs and inclusion indeces don't match"
-                    )
-                self._target = FeO_target
-            else:
-                self._target = pd.Series(FeO_target, index=samples, name="FeO_target")
+            self._process_arraylike(FeO_target=FeO_Target, samples=samples)
         except TypeError:
             if isinstance(FeO_target, (int, float)):
                 self._target = pd.Series(FeO_target, index=samples, name="FeO_target")
@@ -60,9 +49,21 @@ class FeO_Target:
 
     def target(self, melt_wtpc=None):
         if not self._as_function:
-            return self._target.copy().loc[melt_wtpc.index]
+            return self._target.loc[melt_wtpc.index].copy()
 
         return self.function(melt_wtpc)
+
+    def _process_arraylike(self, FeO_target, samples):
+        if len(FeO_target) != len(samples):
+            raise ValueError(
+                "Number of initial FeO inputs and inclusions does not match"
+            )
+        if hasattr(FeO_target, "index"):
+            if not FeO_target.index.equals(samples):
+                raise ValueError("FeO target inputs and inclusion indeces don't match")
+            self._target = FeO_target
+        else:
+            self._target = pd.Series(FeO_target, index=samples, name="FeO_target")
 
 
 def get_olivine_composition(melt_mol_fractions, Fe3Fe2, Kd):

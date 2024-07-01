@@ -10,6 +10,7 @@ from MagmaPEC.PEC_model.scalar import (
     equilibration_scalar,
 )
 from MagmaPEC.PEC_model.vector import crystallisation_correction, equilibration
+from MagmaPEC.plots import PEC_plot
 from MagmaPEC.tools import FeO_Target
 
 
@@ -69,64 +70,28 @@ class PEC:
             "temperature": temperature_offset_parameters,
         }
 
-        self._olivine_corrected = pd.DataFrame(
-            0.0,
-            columns=[
-                "equilibration_crystallisation",
-                "PE_crystallisation",
-                "total_crystallisation",
-            ],
-            index=inclusions.index,
-        )
         self._FeO_as_function = False
 
         # Process attributes
         ######################
 
-        # For inclusions
+        # inclusions
         if not isinstance(inclusions, Melt):
             raise TypeError("Inclusions is not a Melt MagmaFrame")
         else:
             inclusions = inclusions.fillna(0.0)
             self.inclusions = inclusions.normalise()
             self.inclusions_uncorrected = self.inclusions.copy()
-        # For olivine
-        if hasattr(olivines, "index"):
-            try:
-                olivines = olivines.loc[inclusions.index]
-            except KeyError as err:
-                print("Inclusion and olivine indeces don't match")
-                raise err
 
-        # For olivines
-        if not isinstance(olivines, Olivine):
-            try:
-                if len(olivines) != self.inclusions.shape[0]:
-                    raise ValueError("Number of olivines and inclusions does not match")
-            except TypeError:
-                pass
-            forsterite = pd.Series(
-                olivines, index=self.inclusions.index, name="forsterite"
-            )
-            if (~forsterite.between(0, 1)).any():
-                raise ValueError(
-                    "olivine host forsterite contents are not all between 0 and 1"
-                )
-            olivine = Olivine(
-                {"MgO": forsterite * 2, "FeO": (1 - forsterite) * 2, "SiO2": 1},
-                index=self.inclusions.index,
-                units="mol fraction",
-                datatype="oxide",
-            )
-            self._olivine = olivine.normalise()
-        else:
-            olivines = olivines.fillna(0.0)
-            self._olivine = olivines.moles
+        # olivines
+        self._olivine = self._process_olivines(
+            olivines=olivines, samples=inclusions.index
+        )
         self._olivine = self._olivine.reindex(
             columns=self.inclusions.columns, fill_value=0.0
         )
 
-        # For pressure
+        # pressure
         try:
             if len(P_bar) != self.inclusions.shape[0]:
                 raise ValueError(
@@ -144,19 +109,12 @@ class PEC:
         else:
             self.P_bar = pd.Series(P_bar, index=self.inclusions.index, name=P_bar)
 
+        # FeO target
         self.FeO_target = FeO_Target(
             FeO_target=FeO_target, samples=self.inclusions.index
         )
 
-        self._model_results = pd.DataFrame(
-            {
-                "isothermal_equilibration": pd.NA,
-                "Kd_equilibration": pd.NA,
-                "FeO_converge": pd.NA,
-            },
-            index=self.inclusions.index,
-            dtype="boolean",
-        )
+        self._create_output_dataframes(samples=self.inclusions.index)
 
     def reset(self):
         self.inclusions = self.inclusions_uncorrected.copy()
@@ -238,7 +196,7 @@ class PEC:
         respectively melting or crystallising host olivine.
         Expects the melt inclusion is completely equilibrated with the host crystal.
         The models exits when the user input original melt inclusion FeO content is reached.
-        Loosely based on the postentrapment reequilibration procedure in Petrolog:
+        Based on the postentrapment reequilibration procedure in Petrolog:
 
         L. V. Danyushesky and P. Plechov (2011)
         Petrolog3: Integrated software for modeling crystallization processes
@@ -328,122 +286,66 @@ class PEC:
         total_inclusion = pd.concat([equilibrated, corrected.iloc[1:]], axis=0)
 
         if plot:
-            import matplotlib.lines as l
-            import matplotlib.pyplot as plt
-            from labellines import labelLine
 
-            set_markers = kwargs.get("markers", True)
-
-            import geoplot as gp
-
-            fontsize = 14
-
-            fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=False)
-            plt.grid(True, color="whitesmoke")
-
-            colors = gp.colors.flatDesign.by_key()["color"]
-
-            linewidth = 5
-            markersize = 90
-
-            FeO_color = tuple(np.repeat(0.25, 3))
-
-            plt.plot(
-                equilibrated["MgO"],
-                equilibrated["FeO"],
-                ["-", ".-"][set_markers],
-                color=colors[1],
-                # label="equilibration",
-                linewidth=linewidth,
-                mec="k",
-                markersize=10,
-                # alpha=0.7,
-            )
-            plt.plot(
-                corrected["MgO"],
-                corrected["FeO"],
-                ["-", ".-"][set_markers],
-                color=colors[2],
-                linewidth=linewidth,
-                mec="k",
-                markersize=10,
-                # alpha=0.7,
-            )
-            ax.scatter(
-                equilibrated.loc[equilibrated.index[0], "MgO"],
-                equilibrated.loc[equilibrated.index[0], "FeO"],
-                marker="^",
-                color=colors[1],
-                edgecolors="k",
-                s=markersize,
-                zorder=10,
-                label="Glass",
-            )
-            ax.scatter(
-                equilibrated.loc[equilibrated.index[-1], "MgO"],
-                equilibrated.loc[equilibrated.index[-1], "FeO"],
-                marker="o",
-                edgecolors="k",
-                color=colors[3],
-                s=markersize,
-                zorder=10,
-                label="Equilibrated",
-            )
-            ax.scatter(
-                corrected.loc[corrected.index[-1], "MgO"],
-                corrected.loc[corrected.index[-1], "FeO"],
-                marker="s",
-                color=colors[2],
-                edgecolors="k",
-                s=markersize,
-                zorder=10,
-                label="Corrected",
-            )
-
-            middle = sum(ax.get_xlim()) / 2
-
-            if self._FeO_as_function:
-                FeO_inital = self.FeO_target.target(melt_wtpc=corrected)
-                ax.plot(
-                    corrected["MgO"],
-                    FeO_inital,
-                    "-",
-                    color=FeO_color,
-                )
-                FeO_target = sum((min(FeO_inital), max(FeO_inital))) / 2
-            else:
-                ax.axhline(FeO_target, linestyle="-", color=FeO_color, linewidth=1.5)
-
-            FeO_line = ax.get_lines()[-1]
-            try:
-                labelLine(
-                    FeO_line,
-                    x=middle,
-                    label="initial FeO",
-                    size=fontsize * 0.8,
-                    color=FeO_color,
-                )
-            except ValueError:
-                pass
-
-            ax.set_ylim(ax.get_ylim()[0], max((FeO_target * 1.03, ax.get_ylim()[1])))
-
-            ax.set_xlabel("MgO (wt. %)")
-            ax.set_ylabel("FeO$^T$\n(wt. %)", rotation=0, labelpad=30)
-
-            handles, labels = ax.get_legend_handles_labels()
-
-            handles = handles + [l.Line2D([0], [0], linewidth=0)]
-
-            labels = labels + [f"{total_corrected:.2f} mol. %\nPEC correction"]
-
-            ax.legend(
-                handles,
-                labels,
-                title=index,
-                prop={"family": "monospace", "size": fontsize / 1.5},
-                fancybox=False,
-                facecolor="white",
+            PEC_plot(
+                name=index,
+                equilibration=equilibrated,
+                correction=corrected,
+                FeO_target=self.FeO_target,
+                PEC_amount=total_corrected,
             )
 
         return total_inclusion
+
+    def _process_olivines(self, olivines, samples: pd.Index):
+
+        try:
+            if not olivines.index.equals(samples):
+                raise IndexError("olivine and inclusion indeces do not match")
+        except AttributeError:
+            pass
+
+        if isinstance(olivines, Olivine):
+            olivines = olivines.fillna(0.0)
+            return olivines.moles
+        # For olivines
+
+        try:
+            if len(olivines) != len(samples):
+                raise ValueError("Number of olivines and inclusions does not match")
+        except TypeError:
+            pass
+        forsterite = pd.Series(olivines, index=samples, name="forsterite")
+        if (~forsterite.between(0, 1)).any():
+            raise ValueError(
+                "olivine host forsterite contents are not all between 0 and 1"
+            )
+        olivine = Olivine(
+            {"MgO": forsterite * 2, "FeO": (1 - forsterite) * 2, "SiO2": 1},
+            index=samples,
+            units="mol fraction",
+            datatype="oxide",
+        )
+        return olivine.normalise()
+
+    def _create_output_dataframes(self, samples: pd.DataFrame):
+
+        self._olivine_corrected = pd.DataFrame(
+            0.0,
+            columns=[
+                "equilibration_crystallisation",
+                "PE_crystallisation",
+                "total_crystallisation",
+            ],
+            index=samples,
+        )
+
+        self._model_results = pd.DataFrame(
+            {
+                "isothermal_equilibration": pd.NA,
+                "Kd_equilibration": pd.NA,
+                "FeO_converge": pd.NA,
+            },
+            index=samples,
+            dtype="boolean",
+        )
