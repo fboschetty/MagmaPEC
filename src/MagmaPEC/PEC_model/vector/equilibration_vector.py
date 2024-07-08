@@ -53,16 +53,16 @@ class equilibration:
         )
 
         self.Kd_equilibrium = pd.Series(
-            pd.NA, name="Kd_equilibrium", index=self.inclusions.index
+            np.nan, name="Kd_equilibrium", index=self.inclusions.index
         )
-        self.Kd_real = pd.Series(pd.NA, name="Kd_real", index=self.inclusions.index)
+        self.Kd_real = pd.Series(np.nan, name="Kd_real", index=self.inclusions.index)
 
     def reset(self):
         self.inclusions = self._inclusions_uncorrected.copy()
         self._olivine_corrected.loc[:] = 0.0
         self._model_results.loc[:] = pd.NA
-        self.Kd_equilibrium.loc[:] = pd.NA
-        self.Kd_real.loc[:] = pd.NA
+        self.Kd_equilibrium.loc[:] = np.nan
+        self.Kd_real.loc[:] = np.nan
 
     def _get_settings(self, **kwargs):
 
@@ -183,6 +183,20 @@ class equilibration:
 
         return melts_equilibrated, olivine_corrected, error_samples
 
+    def _check_progress(
+        self, Kd_equilibrium_old, Kd_real_old, Kd_equilibrium_new, Kd_real_new, samples
+    ):
+
+        deltaKd_old = abs(Kd_equilibrium_old - Kd_real_old)
+        deltaKd_new = abs(Kd_equilibrium_new - Kd_real_new)
+
+        no_progress = deltaKd_new > deltaKd_old
+        error_samples = list(samples[no_progress])
+
+        self._model_results.loc[error_samples] = False
+
+        return error_samples
+
     def equilibrate(self, inplace=False, **kwargs):
         """
         Equilibrate Fe and Mg between melt inclusions and their olivine host via diffusive Fe-Mg exchange
@@ -212,6 +226,7 @@ class equilibration:
             fO2=fO2,
             forsterite=forsterite_host,
         )
+
         # Fe-Mg exchange vectors
         FeMg_vector = self._get_FeMg_vector()
         # Find disequilibrium inclusions
@@ -322,13 +337,19 @@ class equilibration:
                         var["stepsize"].loc[idx_stepsize].div(self.decrease_factor)
                     )
 
-                # Remove inclusions that returned equilibration errors from future iterations
-                disequilibrium.loc[error_samples] = False
-                self._olivine_corrected.loc[error_samples] = np.nan
-
                 # Samples from the current loop that need to be updated
                 samples_new = var["melt_mol_fractions"].index
 
+                # Find which inclusions are not progressing towards Kd equilibrium
+                no_progress_samples = self._check_progress(
+                    Kd_equilibrium_old=Kd_equilibrium[samples_new],
+                    Kd_real_old=Kd_real[samples_new],
+                    Kd_equilibrium_new=var["Kd_equilibrium"],
+                    Kd_real_new=var["Kd_real"],
+                    samples=samples_new,
+                )
+
+                # copy loop variables to the main variables
                 melt_mol_fractions.loc[samples_new, :] = var[
                     "melt_mol_fractions"
                 ].values
@@ -343,8 +364,15 @@ class equilibration:
                 #     ~disequilibrium_loop
                 # ).values
 
-                reslice = not disequilibrium.loc[samples].equals(disequilibrium_loop)
                 disequilibrium.loc[samples_new] = disequilibrium_loop.values
+
+                # Remove inclusions that returned equilibration errors from future iterations
+                error_samples += no_progress_samples
+                disequilibrium.loc[error_samples] = False
+                self._olivine_corrected.loc[error_samples] = np.nan
+                melt_mol_fractions.loc[error_samples, :] = np.nan
+
+                reslice = not disequilibrium.loc[samples].equals(disequilibrium_loop)
 
                 bar(sum(~disequilibrium) / total_inclusions)
 

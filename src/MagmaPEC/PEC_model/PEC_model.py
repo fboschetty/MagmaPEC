@@ -118,7 +118,7 @@ class PEC:
 
     def reset(self):
         self.inclusions = self.inclusions_uncorrected.copy()
-        self._olivine_corrected.loc[:, :] = 0.0
+        self._olivine_corrected.loc[:, :] = np.nan
         self._model_results.loc[:, :] = pd.NA
 
     @property
@@ -331,7 +331,7 @@ class PEC:
     def _create_output_dataframes(self, samples: pd.DataFrame):
 
         self._olivine_corrected = pd.DataFrame(
-            0.0,
+            np.nan,
             columns=[
                 "equilibration_crystallisation",
                 "PE_crystallisation",

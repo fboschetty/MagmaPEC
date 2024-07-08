@@ -227,7 +227,7 @@ class crystallisation_correction:
                     FeO_converge_error = list(
                         self.stepsize.index[abs(self.stepsize) < 1e-5]
                     )
-                    self._olivine_corrected.loc[FeO_converge_error] = pd.NA
+                    self._olivine_corrected.loc[FeO_converge_error] = np.nan
                     self._model_results.loc[FeO_converge_error, "FeO_converge"] = False
 
                 # determine FeO convergence
@@ -242,27 +242,27 @@ class crystallisation_correction:
                 ].copy()
                 # mi_wtPercent = mi_moles.wt_pc
 
+                FeO_mismatch.loc[FeO_mismatch_loop.index] = FeO_mismatch_loop.values
+
+                reslice = not FeO_mismatch.loc[samples].equals(FeO_mismatch_loop)
+
                 # Remove inclusions that returned equilibration or FeO convergence errors from future iterations
                 remove_samples = (
                     remove_samples + Kd_equilibration_error + FeO_converge_error
                 )
-
                 FeO_mismatch[remove_samples] = False
 
-                reslice = not FeO_mismatch.loc[samples].equals(FeO_mismatch_loop)
-
-                FeO_mismatch.loc[FeO_mismatch_loop.index] = FeO_mismatch_loop.values
                 bar(sum(~FeO_mismatch) / total_inclusions)
 
-        self._model_results.loc[FeO_mismatch.index, "FeO_converge"] = ~FeO_mismatch
+        self._model_results.loc[FeO_mismatch.index, "FeO_converge"] = (
+            ~FeO_mismatch
+        ) & self._model_results.loc[FeO_mismatch.index, "Kd_equilibration"]
         self.inclusions.loc[melt_mol_fractions.index] = melt_mol_fractions.wt_pc.values
 
         # Set compositions of inclusions with equilibration errors to NaNs.
         idx_errors = self._olivine_corrected.index[self._olivine_corrected.isna()]
         self.inclusions.loc[idx_errors] = np.nan
 
-        if (n := (~self._model_results["Kd_equilibration"]).sum()) > 0:
-            w.warn(f"Kd equilibration not reached for {n} inclusions")
         if (n := (~self._model_results["FeO_converge"]).sum()) > 0:
             w.warn(f"FeO not converged for {n} inclusions")
 
