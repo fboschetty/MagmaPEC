@@ -133,7 +133,7 @@ def diffusive_equilibration(
         ).root
 
         equilibration = True
-    except ValueError:
+    except (ValueError, FloatingPointError):
         exchange_amount = 0.0
         equilibration = False
 
