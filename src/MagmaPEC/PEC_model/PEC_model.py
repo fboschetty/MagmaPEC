@@ -245,7 +245,7 @@ class PEC:
 
         self._olivine_corrected["total_crystallisation"] = self._olivine_corrected[
             ["equilibration_crystallisation", "PE_crystallisation"]
-        ].sum(axis=1)
+        ].sum(axis=1, skipna=False)
 
         return (
             self.inclusions.copy(),
