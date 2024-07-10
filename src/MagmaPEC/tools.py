@@ -39,7 +39,7 @@ class FeO_Target:
         self.function = None
 
         try:
-            self._process_arraylike(FeO_target=FeO_Target, samples=samples)
+            self._process_arraylike(FeO_target=FeO_target, samples=samples)
         except TypeError:
             if isinstance(FeO_target, (int, float)):
                 self._target = pd.Series(FeO_target, index=samples, name="FeO_target")
