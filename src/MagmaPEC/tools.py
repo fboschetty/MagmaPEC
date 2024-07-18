@@ -83,6 +83,8 @@ def get_olivine_composition(melt_mol_fractions, Fe3Fe2, Kd):
         units="mol fraction",
         datatype="oxide",
     )
-    olivine = olivine.fillna(1e-6).normalise()
+    olivine = olivine.fillna(
+        0.0
+    ).normalise()  # why did I replace with 1e-6 instead of 0.0 before?
 
     return olivine
