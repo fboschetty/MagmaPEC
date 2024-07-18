@@ -1,10 +1,9 @@
 from functools import partial
-from typing import Dict
 
+import numpy as np
 import pandas as pd
 from IPython.display import clear_output
 from MagmaPandas.MagmaFrames import Melt, Olivine
-
 from MagmaPEC.error_propagation.FeOi_error_propagation import FeOi_prediction
 from MagmaPEC.error_propagation.MC_parameters import PEC_MC_parameters
 from MagmaPEC.PEC_model import PEC
@@ -117,7 +116,7 @@ class PEC_MC:
 
         if isinstance(FeOi_err, (float, int)):
             # for a fixed FeO error
-            if isinstance(self.FeO_target, (float, int)):
+            if isinstance(self.FeO_target, (float, int, pd.Series, np.ndarray)):
                 FeOi = self.FeO_target + FeOi_err
             elif isinstance(self.FeO_target, FeOi_prediction):
                 self.FeO_target._intercept += FeOi_err
@@ -139,15 +138,21 @@ class PEC_MC:
 
     def _calculate_errors(self):
 
-        self.pec = pd.concat([self.pec_MC.mean(), self.pec_MC.std()], axis=1)
+        self.pec = pd.concat([self.pec_MC.mean(), self.pec_MC.std()], axis=1).astype(
+            float
+        )
         self.pec.columns = ("pec", "stddev")
 
-        self.inclusions_corr = pd.DataFrame(
-            index=self.inclusions.index, columns=self.inclusions.elements
+        self.inclusions_corr = Melt(
+            index=self.inclusions.index,
+            columns=self.inclusions.elements,
+            units="wt. %",
+            datatype="oxide",
+            dtype=float,
         )
         colnames = [f"{n}_stddev" for n in self.inclusions.elements]
         self.inclusions_stddev = pd.DataFrame(
-            index=self.inclusions.index, columns=colnames
+            index=self.inclusions.index, columns=colnames, dtype=float
         )
 
         for inclusion, df in self.inclusions_MC.items():
