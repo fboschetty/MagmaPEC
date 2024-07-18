@@ -1,3 +1,4 @@
+import math
 import warnings as w
 from typing import Dict, Tuple
 
@@ -20,7 +21,6 @@ config_handler.set_global(
 from MagmaPandas.configuration import configuration
 from MagmaPandas.Fe_redox import Fe3Fe2_models
 from MagmaPandas.fO2 import calculate_fO2
-
 from MagmaPEC.equilibration_functions import isothermal_equilibration
 from MagmaPEC.Kd_calculation import calculate_Kds
 from MagmaPEC.PEC_configuration import PEC_configuration
@@ -29,6 +29,8 @@ from MagmaPEC.tools import get_olivine_composition, variables_container
 
 class equilibration:
     """ """
+
+    _minimum_stepsize = 1e-6
 
     def __init__(self, inclusions, olivines, P_bar, offset_parameters):
 
@@ -183,19 +185,33 @@ class equilibration:
 
         return melts_equilibrated, olivine_corrected, error_samples
 
-    def _check_progress(
+    def _check_convergence(
         self, Kd_equilibrium_old, Kd_real_old, Kd_equilibrium_new, Kd_real_new, samples
     ):
 
         deltaKd_old = abs(Kd_equilibrium_old - Kd_real_old)
         deltaKd_new = abs(Kd_equilibrium_new - Kd_real_new)
 
-        no_progress = deltaKd_new > deltaKd_old
-        error_samples = list(samples[no_progress])
+        no_progress = np.logical_and(
+            deltaKd_new > deltaKd_old, deltaKd_new > self.Kd_converge
+        )
+        error_samples = list(Kd_equilibrium_new.index[no_progress])
 
-        self._model_results.loc[error_samples] = False
+        # self._model_results.loc[error_samples] = False
 
         return error_samples
+
+    def _check_progress(self, samples):
+
+        try:
+            stepsize_samples = self.stepsize.loc[samples]
+            progress_errors = list(
+                stepsize_samples.index[abs(stepsize_samples) < self._minimum_stepsize]
+            )
+            return progress_errors
+
+        except AttributeError:
+            w.warn("Model not yet initialised")
 
     def equilibrate(self, inplace=False, **kwargs):
         """
@@ -239,8 +255,8 @@ class equilibration:
         self.stepsize.loc[Kd_real < Kd_equilibrium] = -self.stepsize.loc[
             Kd_real < Kd_equilibrium
         ].copy()
-        # Store olivine correction for the current iteration
-        olivine_corrected_loop = self._olivine_corrected.copy()
+        # # Store olivine correction for the current iteration
+        # olivine_corrected_loop = self._olivine_corrected.copy()
 
         ##### Main Fe-Mg exhange loop #####
         ###################################
@@ -341,13 +357,14 @@ class equilibration:
                 samples_new = var["melt_mol_fractions"].index
 
                 # Find which inclusions are not progressing towards Kd equilibrium
-                no_progress_samples = self._check_progress(
+                convergence_errors = self._check_convergence(
                     Kd_equilibrium_old=Kd_equilibrium[samples_new],
                     Kd_real_old=Kd_real[samples_new],
                     Kd_equilibrium_new=var["Kd_equilibrium"],
                     Kd_real_new=var["Kd_real"],
                     samples=samples_new,
                 )
+                progress_errors = self._check_progress(samples=samples_new)
 
                 # copy loop variables to the main variables
                 melt_mol_fractions.loc[samples_new, :] = var[
@@ -367,10 +384,13 @@ class equilibration:
                 disequilibrium.loc[samples_new] = disequilibrium_loop.values
 
                 # Remove inclusions that returned equilibration errors from future iterations
-                error_samples += no_progress_samples
-                disequilibrium.loc[error_samples] = False
-                self._olivine_corrected.loc[error_samples] = np.nan
-                melt_mol_fractions.loc[error_samples, :] = np.nan
+                total_error_samples = (
+                    error_samples + convergence_errors + progress_errors
+                )
+                disequilibrium.loc[total_error_samples] = False
+                self._olivine_corrected.loc[total_error_samples] = np.nan
+                melt_mol_fractions.loc[total_error_samples, :] = np.nan
+                self._model_results.loc[total_error_samples] = False
 
                 reslice = not disequilibrium.loc[samples].equals(disequilibrium_loop)
 
@@ -378,9 +398,10 @@ class equilibration:
 
         corrected_compositions = melt_mol_fractions.wt_pc
 
-        # Set compositions of inclusions with equilibration errors to NaNs.
-        idx_errors = self._olivine_corrected.index[self._olivine_corrected.isna()]
-        corrected_compositions.loc[idx_errors] = np.nan
+        # # Set compositions of inclusions with equilibration errors to NaNs.
+        # idx_errors = self._olivine_corrected.index[self._olivine_corrected.isna()]
+        # corrected_compositions.loc[idx_errors, :] = np.nan
+        # self._model_results[idx_errors] = False
 
         # temperatures_new = corrected_compositions.temperature(P_bar=P_bar)
         self.inclusions = corrected_compositions
@@ -390,9 +411,11 @@ class equilibration:
         if (n := (~self._model_results).sum()) > 0:
             w.warn(f"Isothermal equilibration not reached for {n} inclusions")
 
-        if not inplace:
-            return (
-                corrected_compositions.copy(),
-                self._olivine_corrected.copy(),
-                self._model_results.copy(),
-            )
+        if inplace:
+            return
+
+        return (
+            corrected_compositions.copy(),
+            self._olivine_corrected.copy(),
+            self._model_results.copy(),
+        )

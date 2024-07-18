@@ -91,9 +91,9 @@ def isothermal_equilibration(
             # x1=sign * 0.01,
             bracket=[min_val, 10],
         ).root
-        equilibration = True
+        equilibration = True if not math.isnan(olivine_amount) else False
 
-    except ValueError:
+    except (ValueError, TypeError):
         olivine_amount = np.nan
         equilibration = False
 
@@ -132,7 +132,8 @@ def diffusive_equilibration(
             bracket=[min_val, max_val],
         ).root
 
-        equilibration = True
+        equilibration = True if not math.isnan(exchange_amount) else False
+
     except (ValueError, FloatingPointError):
         exchange_amount = 0.0
         equilibration = False
