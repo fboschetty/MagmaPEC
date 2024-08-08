@@ -86,7 +86,7 @@ class _meta_PEC_configuration(type):
                 f"{new_line}{param:.<{names_length}}{value_str:.>{pad_right}}"
             )
 
-        return message + parameter_settings
+        return message + parameter_settings + f"{new_line}{'':#^{pad_total}}"
 
 
 class PEC_configuration(metaclass=_meta_PEC_configuration):
