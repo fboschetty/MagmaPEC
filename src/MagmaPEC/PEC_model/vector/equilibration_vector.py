@@ -21,6 +21,7 @@ config_handler.set_global(
 from MagmaPandas.configuration import configuration
 from MagmaPandas.Fe_redox import Fe3Fe2_models
 from MagmaPandas.fO2 import calculate_fO2
+
 from MagmaPEC.equilibration_functions import isothermal_equilibration
 from MagmaPEC.Kd_calculation import calculate_Kds
 from MagmaPEC.PEC_configuration import PEC_configuration

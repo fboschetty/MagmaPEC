@@ -6,10 +6,9 @@ import pandas as pd
 from MagmaPandas.configuration import configuration
 from MagmaPandas.MagmaFrames import Melt
 from MagmaPandas.MagmaSeries import MagmaSeries
-from scipy.optimize import root_scalar
-
 from MagmaPEC.equilibration_functions import _root_Kd
 from MagmaPEC.Kd_calculation import _calculate_Kds
+from scipy.optimize import root_scalar
 
 from ...PEC_configuration import PEC_configuration
 
@@ -146,7 +145,7 @@ def crystallisation_correction_scalar(
             stepsize = stepsize / decrease_factor
 
     Kd_equilibrium, Kd_real = calculate_Kd(mi_moles.iloc[-1].normalise())
-    temperature_new = mi_wtPercent.iloc[-1].temperature(P_bar)
+    temperature_new = mi_wtPercent.iloc[-1].temperature(P_bar=P_bar)
     olivine_corrected = mi_moles.index.values * 100
     if olivine_corrected.max() == 0:
         mi_wtPercent = mi_moles.wt_pc
